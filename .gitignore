@@ -1,0 +1,28 @@
+# Secrets (never commit credentials)
+firmware/*/secrets.h
+secrets.h
+
+# Arduino build artifacts
+firmware/**/build/
+firmware/**/.build/
+
+# IDE files
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Docker volumes (if local)
+infra/postgres/data/
+infra/mosquitto/data/
+infra/mosquitto/log/
+infra/grafana/data/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
