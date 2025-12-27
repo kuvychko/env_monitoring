@@ -10,6 +10,21 @@ services:
       - mosquitto_log:/mosquitto/log
     restart: unless-stopped
 
+  postgres:
+    image: timescale/timescaledb:latest-pg16
+    container_name: postgres
+    environment:
+      POSTGRES_USER: iaq
+      POSTGRES_PASSWORD: iaqpass
+      POSTGRES_DB: iaq
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    restart: unless-stopped
+
 volumes:
   mosquitto_data:
   mosquitto_log:
+  postgres_data:
