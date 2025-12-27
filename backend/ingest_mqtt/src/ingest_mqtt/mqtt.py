@@ -85,6 +85,9 @@ def parse_payload(payload: bytes) -> dict | None:
         "typical_size_um": get_float("typical_size_um"),
         "rssi_dbm": get_int("rssi_dbm"),
         "uptime_s": get_int("uptime_s"),
+        # CO2 sensor diagnostics
+        "co2_age_s": get_int("co2_age_s"),
+        "co2_resets": get_int("co2_resets"),
     }
 
 
