@@ -24,6 +24,23 @@ services:
       - ./postgres/init:/docker-entrypoint-initdb.d:ro
     restart: unless-stopped
 
+  ingest:
+    build: ../backend/ingest_mqtt
+    container_name: ingest
+    environment:
+      MQTT_HOST: mosquitto
+      MQTT_PORT: "1883"
+      MQTT_TOPIC: "iaq/+/telemetry"
+      PG_HOST: postgres
+      PG_PORT: "5432"
+      PG_DB: iaq
+      PG_USER: iaq
+      PG_PASSWORD: iaqpass
+    depends_on:
+      - mosquitto
+      - postgres
+    restart: unless-stopped
+
 volumes:
   mosquitto_data:
   mosquitto_log:
