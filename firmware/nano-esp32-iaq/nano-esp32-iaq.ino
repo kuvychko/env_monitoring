@@ -17,6 +17,7 @@
 #include <math.h>
 #include <WiFi.h>
 #include <time.h>
+#include <esp_task_wdt.h>
 #include <PubSubClient.h>
 
 #include <pas-co2-ino.hpp>
@@ -25,6 +26,13 @@
 #include <SensirionI2cSps30.h>
 
 #include "secrets.h"
+
+// ---- BME280 reading struct ----
+typedef struct {
+  float temp_c;
+  float rh_pct;
+  float pressure_hpa;
+} BmeReading;
 
 // ---- SPS30 reading struct (must be before function prototypes) ----
 typedef struct {
@@ -50,10 +58,12 @@ static constexpr uint32_t BAUD           = 115200;
 static constexpr uint32_t I2C_HZ         = 100000;   // limited by SPS30
 static constexpr uint32_t PUBLISH_MS     = 60000;    // publish telemetry every 60s
 static constexpr uint32_t SPS_POLL_MS    = 1000;     // poll SPS30 ready flag ~1 Hz
+static constexpr uint32_t BME_POLL_MS    = 6000;     // poll BME280 every 6s (10 samples in 60s)
 static constexpr uint32_t CO2_POLL_MS    = 15000;    // poll CO2 sensor every 15s
 static constexpr uint32_t PRESS_UPDATE_MS = 30000;   // update pressure reference every 30s
 static constexpr uint32_t WIFI_RETRY_MS  = 5000;     // Wi-Fi reconnect interval
 static constexpr uint32_t MQTT_RETRY_MS  = 5000;     // MQTT reconnect interval
+static constexpr uint32_t WDT_TIMEOUT_S  = 30;       // watchdog timeout in seconds
 
 static constexpr uint8_t CO2_FAIL_THRESHOLD = 3;     // soft reset after 3 consecutive failures
 
@@ -99,6 +109,19 @@ static SpsReading spsBuf[SPS_BUF_SIZE];
 static uint8_t spsBufHead = 0;      // next write position
 static uint8_t spsBufCount = 0;     // number of valid samples (0 to SPS_BUF_SIZE)
 
+// ---- BME280 ring buffer for averaging ----
+static constexpr uint8_t BME_BUF_SIZE = 10;  // average over 10 readings (~60s at 6s interval)
+static BmeReading bmeBuf[BME_BUF_SIZE];
+static uint8_t bmeBufHead = 0;
+static uint8_t bmeBufCount = 0;
+static uint32_t lastBmeReadTime = 0;  // timestamp of last valid BME reading
+
+// ---- CO2 ring buffer for averaging ----
+static constexpr uint8_t CO2_BUF_SIZE = 4;   // average over 4 readings (~60s at 15s interval)
+static int16_t co2Buf[CO2_BUF_SIZE];
+static uint8_t co2BufHead = 0;
+static uint8_t co2BufCount = 0;
+
 // Compute average of SPS30 readings in buffer
 static bool getSpsAverage(SpsReading& avg) {
   if (spsBufCount == 0) return false;
@@ -131,6 +154,35 @@ static bool getSpsAverage(SpsReading& avg) {
   return true;
 }
 
+// Compute average of BME280 readings in buffer
+static bool getBmeAverage(BmeReading& avg) {
+  if (bmeBufCount == 0) return false;
+
+  avg = {0, 0, 0};
+  for (uint8_t i = 0; i < bmeBufCount; i++) {
+    const BmeReading& r = bmeBuf[i];
+    avg.temp_c += r.temp_c;
+    avg.rh_pct += r.rh_pct;
+    avg.pressure_hpa += r.pressure_hpa;
+  }
+  float n = (float)bmeBufCount;
+  avg.temp_c /= n;
+  avg.rh_pct /= n;
+  avg.pressure_hpa /= n;
+  return true;
+}
+
+// Compute average of CO2 readings in buffer
+static int16_t getCo2Average() {
+  if (co2BufCount == 0) return -1;
+
+  int32_t sum = 0;
+  for (uint8_t i = 0; i < co2BufCount; i++) {
+    sum += co2Buf[i];
+  }
+  return (int16_t)(sum / co2BufCount);
+}
+
 #ifdef NO_ERROR
 #undef NO_ERROR
 #endif
@@ -139,6 +191,7 @@ static bool getSpsAverage(SpsReading& avg) {
 // ---- Timing state ----
 static uint32_t lastPublish = 0;
 static uint32_t lastSpsPoll = 0;
+static uint32_t lastBmePoll = 0;
 static uint32_t lastCo2Poll = 0;
 static uint32_t lastPressUpdate = 0;
 static uint32_t lastWifiCheck = 0;
@@ -265,6 +318,32 @@ static void pollSps30() {
   }
 }
 
+// ---- BME280 polling ----
+static void pollBme280() {
+  float tempC = bme.readTemperature();
+  float humidity = bme.readHumidity();
+  float pressurePa = bme.readPressure();
+
+  // Validate readings
+  if (isnan(tempC) || isnan(humidity) || isnan(pressurePa)) {
+    Serial.println("BME280 read error (NaN)");
+    return;  // Don't add invalid readings to buffer
+  }
+
+  // Add to ring buffer
+  BmeReading r;
+  r.temp_c = tempC;
+  r.rh_pct = humidity;
+  r.pressure_hpa = pressurePa / 100.0f;
+
+  bmeBuf[bmeBufHead] = r;
+  bmeBufHead = (bmeBufHead + 1) % BME_BUF_SIZE;
+  if (bmeBufCount < BME_BUF_SIZE) {
+    bmeBufCount++;
+  }
+  lastBmeReadTime = millis();
+}
+
 // ---- CO2 polling with soft reset recovery ----
 static void pollCo2() {
   int16_t reading = 0;
@@ -275,6 +354,13 @@ static void pollCo2() {
     lastValidCo2 = reading;
     lastCo2ReadTime = millis();
     co2FailCount = 0;
+
+    // Add to ring buffer for averaging
+    co2Buf[co2BufHead] = reading;
+    co2BufHead = (co2BufHead + 1) % CO2_BUF_SIZE;
+    if (co2BufCount < CO2_BUF_SIZE) {
+      co2BufCount++;
+    }
   } else {
     // Failure - increment count
     co2FailCount++;
@@ -338,26 +424,31 @@ void getTimestamp(char* buf, size_t len) {
 void publishTelemetry() {
   if (!mqtt.connected()) return;
 
-  // Use cached CO2 value (updated by pollCo2)
-  // If reading is stale (>60s old), report -1
   const uint32_t now = millis();
-  const bool co2Valid = (lastValidCo2 > 0) && ((now - lastCo2ReadTime) < 60000);
 
-  // Read BME280 with NaN checks
-  float tempC       = bme.readTemperature();
-  float humidity    = bme.readHumidity();
-  float pressurePa  = bme.readPressure();
-  float pressurehPa = pressurePa / 100.0f;
+  // Get averaged CO2 value from ring buffer
+  // If reading is stale (>60s old) or no readings, report -1
+  const bool co2Valid = (co2BufCount > 0) && ((now - lastCo2ReadTime) < 60000);
+  const int16_t co2Avg = co2Valid ? getCo2Average() : -1;
 
-  const bool bmeOk = !isnan(tempC) && !isnan(humidity) && !isnan(pressurePa);
-  if (!bmeOk) {
-    Serial.println("BME280 read error (NaN)");
-    tempC = -999.0f;
+  // Get averaged BME280 values from ring buffer
+  // If reading is stale (>60s old) or no readings, report error values
+  const bool bmeValid = (bmeBufCount > 0) && ((now - lastBmeReadTime) < 60000);
+  BmeReading bmeAvg;
+  float tempC, humidity, pressurehPa;
+
+  if (bmeValid && getBmeAverage(bmeAvg)) {
+    tempC = bmeAvg.temp_c;
+    humidity = bmeAvg.rh_pct;
+    pressurehPa = bmeAvg.pressure_hpa;
+  } else {
+    tempC = -1.0f;
     humidity = -1.0f;
     pressurehPa = -1.0f;
   }
 
-  // Get averaged SPS30 values
+  // Get averaged SPS30 values from ring buffer
+  // If reading is stale (>60s old) or no readings, report -1
   SpsReading spsAvg;
   const bool spsOk = getSpsAverage(spsAvg);
 
@@ -395,7 +486,7 @@ void publishTelemetry() {
     "}",
     DEVICE_ID,
     ts,
-    co2Valid ? lastValidCo2 : -1,
+    co2Avg,
     tempC,
     humidity,
     pressurehPa,
@@ -414,6 +505,8 @@ void publishTelemetry() {
     co2AgeS,
     co2ResetCount
   );
+
+  (void)len;  // suppress unused variable warning
 
   // Publish to MQTT
   if (mqtt.publish(topicTelemetry, payload)) {
@@ -513,6 +606,17 @@ void setup() {
   mqtt.setBufferSize(1024);  // increased for diagnostic fields
   connectMQTT();
 
+  // --- Watchdog Timer ---
+  Serial.println("Initializing watchdog timer...");
+  esp_task_wdt_config_t wdt_config = {
+    .timeout_ms = WDT_TIMEOUT_S * 1000,
+    .idle_core_mask = (1 << portNUM_PROCESSORS) - 1,  // all cores
+    .trigger_panic = true
+  };
+  esp_task_wdt_init(&wdt_config);
+  esp_task_wdt_add(NULL);  // add current task to watchdog
+  Serial.println("Watchdog OK");
+
   Serial.println("----");
   Serial.println("Setup complete. Publishing telemetry every 60s.");
   Serial.println("----");
@@ -520,12 +624,20 @@ void setup() {
   const uint32_t now = millis();
   lastPublish = now;
   lastSpsPoll = now;
+  lastBmePoll = now;
   lastCo2Poll = now;
   lastPressUpdate = now;
+
+  // Take initial sensor readings to populate buffers
+  pollBme280();
+  pollCo2();
 }
 
 void loop() {
   const uint32_t now = millis();
+
+  // Feed the watchdog to prevent reset
+  esp_task_wdt_reset();
 
   // 1) Maintain WiFi connection
   if (now - lastWifiCheck >= WIFI_RETRY_MS) {
@@ -551,19 +663,25 @@ void loop() {
     pollSps30();
   }
 
-  // 4) Poll CO2 every 15s (with soft reset recovery)
+  // 4) Poll BME280 every 6s
+  if (now - lastBmePoll >= BME_POLL_MS) {
+    lastBmePoll += BME_POLL_MS;
+    pollBme280();
+  }
+
+  // 5) Poll CO2 every 15s (with soft reset recovery)
   if (now - lastCo2Poll >= CO2_POLL_MS) {
     lastCo2Poll += CO2_POLL_MS;
     pollCo2();
   }
 
-  // 5) Update pressure reference every 30s (separate from CO2 read)
+  // 6) Update pressure reference every 30s (separate from CO2 read)
   if (now - lastPressUpdate >= PRESS_UPDATE_MS) {
     lastPressUpdate += PRESS_UPDATE_MS;
     updatePressureRef();
   }
 
-  // 6) Publish telemetry every 60s
+  // 7) Publish telemetry every 60s
   if (now - lastPublish >= PUBLISH_MS) {
     lastPublish += PUBLISH_MS;
     publishTelemetry();
