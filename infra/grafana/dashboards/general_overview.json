@@ -350,8 +350,9 @@
   "templating": { "list": [] },
   "time": { "from": "now-6h", "to": "now" },
   "timepicker": {},
+  "refresh": "5m",
   "timezone": "browser",
-  "title": "General Overview",
+  "title": "Overview",
   "uid": "general-overview",
   "version": 1
 }
