@@ -57,6 +57,7 @@ COLUMNS = [
     "pm1_0_ugm3", "pm2_5_ugm3", "pm4_0_ugm3", "pm10_ugm3",
     "nc0_5_pcm3", "nc1_0_pcm3", "nc2_5_pcm3", "nc4_0_pcm3", "nc10_pcm3",
     "typical_size_um", "rssi_dbm", "uptime_s",
+    "co2_age_s", "co2_resets",  # CO2 sensor diagnostics
 ]
 
 INSERT_SQL = f"""

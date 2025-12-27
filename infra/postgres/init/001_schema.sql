@@ -32,7 +32,11 @@ CREATE TABLE iaq_readings (
 
     -- Device metadata
     rssi_dbm        INTEGER,
-    uptime_s        BIGINT
+    uptime_s        BIGINT,
+
+    -- CO2 sensor diagnostics
+    co2_age_s       INTEGER,      -- age of CO2 reading in seconds
+    co2_resets      INTEGER       -- count of CO2 sensor soft resets
 );
 
 -- Convert to TimescaleDB hypertable for efficient time-series storage
