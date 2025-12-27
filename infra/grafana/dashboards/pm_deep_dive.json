@@ -279,6 +279,7 @@
   "templating": { "list": [] },
   "time": { "from": "now-6h", "to": "now" },
   "timepicker": {},
+  "refresh": "5m",
   "timezone": "browser",
   "title": "PM Deep Dive",
   "uid": "pm-deep-dive",
