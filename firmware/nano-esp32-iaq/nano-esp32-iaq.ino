@@ -26,6 +26,13 @@
 
 #include "secrets.h"
 
+// ---- SPS30 reading struct (must be before function prototypes) ----
+typedef struct {
+  float mc1p0, mc2p5, mc4p0, mc10p0;
+  float nc0p5, nc1p0, nc2p5, nc4p0, nc10p0;
+  float typicalSize;
+} SpsReading;
+
 // ---- Device Configuration ----
 #ifndef DEVICE_ID
 #define DEVICE_ID "nanoesp32_office"
@@ -40,14 +47,13 @@ PubSubClient mqtt(wifiClient);
 
 // ---- Settings ----
 static constexpr uint32_t BAUD           = 115200;
-static constexpr uint32_t I2C_HZ         = 100000;
+static constexpr uint32_t I2C_HZ         = 100000;   // limited by SPS30
 static constexpr uint32_t PUBLISH_MS     = 60000;    // publish telemetry every 60s
 static constexpr uint32_t SPS_POLL_MS    = 1000;     // poll SPS30 ready flag ~1 Hz
 static constexpr uint32_t WIFI_RETRY_MS  = 5000;     // Wi-Fi reconnect interval
 static constexpr uint32_t MQTT_RETRY_MS  = 5000;     // MQTT reconnect interval
 
 static constexpr uint8_t  BME_ADDR = 0x77;
-static constexpr float    SEALEVELPRESSURE_HPA = 1013.25f;
 
 // PAS pressure reference range (hPa)
 static constexpr int PRESS_MIN_HPA = 750;
@@ -83,11 +89,43 @@ static uint16_t smooth_press_hpa(uint16_t new_hpa) {
   return (uint16_t)lroundf(filt);
 }
 
-// ---- SPS30 state ----
-static bool  spsHasData = false;
-static float mc1p0=0, mc2p5=0, mc4p0=0, mc10p0=0;
-static float nc0p5=0, nc1p0=0, nc2p5=0, nc4p0=0, nc10p0=0;
-static float typicalParticleSize=0;
+// ---- SPS30 ring buffer for averaging ----
+static constexpr uint8_t SPS_BUF_SIZE = 10;  // average over 10 readings (~10s at 1Hz)
+static SpsReading spsBuf[SPS_BUF_SIZE];
+static uint8_t spsBufHead = 0;      // next write position
+static uint8_t spsBufCount = 0;     // number of valid samples (0 to SPS_BUF_SIZE)
+
+// Compute average of SPS30 readings in buffer
+static bool getSpsAverage(SpsReading& avg) {
+  if (spsBufCount == 0) return false;
+
+  avg = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+  for (uint8_t i = 0; i < spsBufCount; i++) {
+    const SpsReading& r = spsBuf[i];
+    avg.mc1p0 += r.mc1p0;
+    avg.mc2p5 += r.mc2p5;
+    avg.mc4p0 += r.mc4p0;
+    avg.mc10p0 += r.mc10p0;
+    avg.nc0p5 += r.nc0p5;
+    avg.nc1p0 += r.nc1p0;
+    avg.nc2p5 += r.nc2p5;
+    avg.nc4p0 += r.nc4p0;
+    avg.nc10p0 += r.nc10p0;
+    avg.typicalSize += r.typicalSize;
+  }
+  float n = (float)spsBufCount;
+  avg.mc1p0 /= n;
+  avg.mc2p5 /= n;
+  avg.mc4p0 /= n;
+  avg.mc10p0 /= n;
+  avg.nc0p5 /= n;
+  avg.nc1p0 /= n;
+  avg.nc2p5 /= n;
+  avg.nc4p0 /= n;
+  avg.nc10p0 /= n;
+  avg.typicalSize /= n;
+  return true;
+}
 
 #ifdef NO_ERROR
 #undef NO_ERROR
@@ -189,21 +227,30 @@ static void pollSps30() {
   if (err != NO_ERROR) {
     Serial.print("SPS30 readDataReadyFlag() err=");
     Serial.println(err);
+    spsBufCount = 0;  // invalidate buffer on error
     return;
   }
   if (ready == 0) return;
 
+  SpsReading r;
   err = sps.readMeasurementValuesFloat(
-    mc1p0, mc2p5, mc4p0, mc10p0,
-    nc0p5, nc1p0, nc2p5, nc4p0, nc10p0,
-    typicalParticleSize
+    r.mc1p0, r.mc2p5, r.mc4p0, r.mc10p0,
+    r.nc0p5, r.nc1p0, r.nc2p5, r.nc4p0, r.nc10p0,
+    r.typicalSize
   );
   if (err != NO_ERROR) {
     Serial.print("SPS30 readMeasurementValuesFloat() err=");
     Serial.println(err);
+    spsBufCount = 0;  // invalidate buffer on error
     return;
   }
-  spsHasData = true;
+
+  // Add to ring buffer
+  spsBuf[spsBufHead] = r;
+  spsBufHead = (spsBufHead + 1) % SPS_BUF_SIZE;
+  if (spsBufCount < SPS_BUF_SIZE) {
+    spsBufCount++;
+  }
 }
 
 // ---- ISO8601 timestamp ----
@@ -228,27 +275,41 @@ void publishTelemetry() {
     if (co2ppm == 0) delay(50);
   }
 
-  // Read BME280
-  const float tempC       = bme.readTemperature();
-  const float humidity    = bme.readHumidity();
-  const float pressurePa  = bme.readPressure();
-  const float pressurehPa = pressurePa / 100.0f;
+  // Read BME280 with NaN checks
+  float tempC       = bme.readTemperature();
+  float humidity    = bme.readHumidity();
+  float pressurePa  = bme.readPressure();
+  float pressurehPa = pressurePa / 100.0f;
 
-  // Update PAS pressure reference
-  const uint16_t nextPressRef = smooth_press_hpa(hpa_from_pa(pressurePa));
-  if (nextPressRef != lastPressRefSent_hPa) {
-    int32_t e2 = co2.setPressRef(nextPressRef);
-    if (e2 == XENSIV_PASCO2_OK) {
-      lastPressRefSent_hPa = nextPressRef;
+  const bool bmeOk = !isnan(tempC) && !isnan(humidity) && !isnan(pressurePa);
+  if (!bmeOk) {
+    Serial.println("BME280 read error (NaN)");
+    tempC = -999.0f;
+    humidity = -1.0f;
+    pressurehPa = -1.0f;
+  }
+
+  // Update PAS pressure reference (only if BME280 is valid)
+  if (bmeOk) {
+    const uint16_t nextPressRef = smooth_press_hpa(hpa_from_pa(pressurePa));
+    if (nextPressRef != lastPressRefSent_hPa) {
+      int32_t e2 = co2.setPressRef(nextPressRef);
+      if (e2 == XENSIV_PASCO2_OK) {
+        lastPressRefSent_hPa = nextPressRef;
+      }
     }
   }
+
+  // Get averaged SPS30 values
+  SpsReading spsAvg;
+  const bool spsOk = getSpsAverage(spsAvg);
 
   // Build timestamp
   char ts[32];
   getTimestamp(ts, sizeof(ts));
 
   // Build JSON payload
-  char payload[512];
+  char payload[768];
   int len = snprintf(payload, sizeof(payload),
     "{"
     "\"device_id\":\"%s\","
@@ -261,6 +322,12 @@ void publishTelemetry() {
     "\"pm2_5_ugm3\":%.1f,"
     "\"pm4_0_ugm3\":%.1f,"
     "\"pm10_ugm3\":%.1f,"
+    "\"nc0_5_pcm3\":%.1f,"
+    "\"nc1_0_pcm3\":%.1f,"
+    "\"nc2_5_pcm3\":%.1f,"
+    "\"nc4_0_pcm3\":%.1f,"
+    "\"nc10_pcm3\":%.1f,"
+    "\"typical_size_um\":%.2f,"
     "\"rssi_dbm\":%d,"
     "\"uptime_s\":%lu"
     "}",
@@ -270,15 +337,21 @@ void publishTelemetry() {
     tempC,
     humidity,
     pressurehPa,
-    spsHasData ? mc1p0 : -1.0f,
-    spsHasData ? mc2p5 : -1.0f,
-    spsHasData ? mc4p0 : -1.0f,
-    spsHasData ? mc10p0 : -1.0f,
+    spsOk ? spsAvg.mc1p0 : -1.0f,
+    spsOk ? spsAvg.mc2p5 : -1.0f,
+    spsOk ? spsAvg.mc4p0 : -1.0f,
+    spsOk ? spsAvg.mc10p0 : -1.0f,
+    spsOk ? spsAvg.nc0p5 : -1.0f,
+    spsOk ? spsAvg.nc1p0 : -1.0f,
+    spsOk ? spsAvg.nc2p5 : -1.0f,
+    spsOk ? spsAvg.nc4p0 : -1.0f,
+    spsOk ? spsAvg.nc10p0 : -1.0f,
+    spsOk ? spsAvg.typicalSize : -1.0f,
     WiFi.RSSI(),
     millis() / 1000
   );
 
-  // Publish with QoS 1
+  // Publish to MQTT
   if (mqtt.publish(topicTelemetry, payload)) {
     Serial.print("Published: ");
     Serial.println(payload);
@@ -335,10 +408,10 @@ void setup() {
     Serial.println(" hPa");
   }
 
-  // Start PAS continuous measurements every 5 seconds
-  err32 = co2.startMeasure(5);
+  // Start PAS continuous measurements every 10 seconds
+  err32 = co2.startMeasure(10);
   if (err32 != XENSIV_PASCO2_OK) {
-    Serial.print("ERROR: PAS CO2 startMeasure(5) failed, err=");
+    Serial.print("ERROR: PAS CO2 startMeasure(10) failed, err=");
     Serial.println(err32);
     while (true) delay(1000);
   }
@@ -373,7 +446,7 @@ void setup() {
 
   // --- MQTT ---
   mqtt.setServer(MQTT_HOST, MQTT_PORT);
-  mqtt.setBufferSize(512);
+  mqtt.setBufferSize(768);
   connectMQTT();
 
   Serial.println("----");
