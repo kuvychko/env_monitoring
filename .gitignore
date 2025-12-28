@@ -1,6 +1,7 @@
 # Secrets (never commit credentials)
 firmware/*/secrets.h
 secrets.h
+infra/*/passwd
 
 # Arduino build artifacts
 firmware/**/build/
