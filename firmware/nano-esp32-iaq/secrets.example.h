@@ -16,6 +16,10 @@
 #define MQTT_HOST "your.mqtt.broker.ip"  // IP address or hostname of your MQTT broker
 #define MQTT_PORT 1883
 
+// MQTT authentication (must match credentials in infra/.env)
+#define MQTT_USER "iaq"
+#define MQTT_PASS "your_mqtt_password"
+
 // Device ID (optional override - defaults to "nanoesp32_office" in main sketch)
 // #define DEVICE_ID "nanoesp32_bedroom"
 

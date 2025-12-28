@@ -272,7 +272,7 @@ void connectMQTT() {
   char lwt[64];
   snprintf(lwt, sizeof(lwt), "{\"device_id\":\"%s\",\"status\":\"offline\"}", DEVICE_ID);
 
-  if (mqtt.connect(DEVICE_ID, NULL, NULL, topicStatus, 1, true, lwt)) {
+  if (mqtt.connect(DEVICE_ID, MQTT_USER, MQTT_PASS, topicStatus, 1, true, lwt)) {
     Serial.println("MQTT connected!");
 
     // Publish online status
