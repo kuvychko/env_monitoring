@@ -294,18 +294,48 @@ From devices on the same network (replace IP as needed):
 
 ## Running as a System Service
 
-Docker Compose services already restart automatically (`restart: unless-stopped`). To ensure Docker starts on boot:
+The Docker stack is configured for automatic recovery after power loss or reboot:
+
+1. **Restart policies**: All services use `restart: unless-stopped`, meaning Docker will automatically restart containers after a crash or reboot
+2. **Data persistence**: Named volumes preserve all data (database, Grafana settings, MQTT state)
+
+### Enable Docker on Boot
+
+Ensure Docker starts automatically when the Pi boots:
 
 ```bash
 sudo systemctl enable docker
+sudo systemctl enable containerd
 ```
 
-Verify after reboot:
+Verify they're enabled:
+
+```bash
+systemctl is-enabled docker      # Should output: enabled
+systemctl is-enabled containerd  # Should output: enabled
+```
+
+### Verify After Reboot
 
 ```bash
 sudo reboot
 # After reboot, SSH back in
-docker compose ps
+docker compose ps  # All 4 services should show "running"
+```
+
+### If Containers Don't Auto-Start
+
+Check Docker status:
+
+```bash
+sudo systemctl status docker
+```
+
+If Docker is running but containers aren't, start them manually:
+
+```bash
+cd ~/env_monitoring/infra
+docker compose up -d
 ```
 
 ## Common Commands
