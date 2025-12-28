@@ -6,6 +6,7 @@ services:
       - "1883:1883"
     volumes:
       - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./mosquitto/passwd:/mosquitto/config/passwd:ro
       - mosquitto_data:/mosquitto/data
       - mosquitto_log:/mosquitto/log
     restart: unless-stopped
@@ -15,10 +16,9 @@ services:
     container_name: postgres
     environment:
       POSTGRES_USER: iaq
-      POSTGRES_PASSWORD: iaqpass
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: iaq
-    ports:
-      - "5432:5432"
+    # Port not exposed externally - only accessible within Docker network
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./postgres/init:/docker-entrypoint-initdb.d:ro
@@ -31,11 +31,13 @@ services:
       MQTT_HOST: mosquitto
       MQTT_PORT: "1883"
       MQTT_TOPIC: "iaq/+/telemetry"
+      MQTT_USER: ${MQTT_USER}
+      MQTT_PASSWORD: ${MQTT_PASSWORD}
       PG_HOST: postgres
       PG_PORT: "5432"
       PG_DB: iaq
       PG_USER: iaq
-      PG_PASSWORD: iaqpass
+      PG_PASSWORD: ${POSTGRES_PASSWORD}
     depends_on:
       - mosquitto
       - postgres
@@ -47,7 +49,9 @@ services:
     ports:
       - "3000:3000"
     environment:
-      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+      # Pass postgres password for datasource provisioning
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - grafana_data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning:ro

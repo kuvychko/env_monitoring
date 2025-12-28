@@ -161,10 +161,22 @@ git clone https://github.com/YOUR_USERNAME/env_monitoring.git
 cd env_monitoring
 ```
 
-### 4.2 Start the services
+### 4.2 Configure credentials
+
+The stack uses environment variables for all credentials. A `.env` file with generated passwords has been created:
 
 ```bash
 cd infra
+cat .env  # Review the generated passwords
+```
+
+**Important**: Save these passwords somewhere secure. You'll need:
+- `GRAFANA_ADMIN_PASSWORD` for Grafana login
+- `MQTT_PASSWORD` for the Arduino firmware
+
+### 4.3 Start the services
+
+```bash
 docker compose up -d
 ```
 
@@ -198,11 +210,14 @@ All 4 services should show `running`.
 # Install MQTT client tools
 sudo apt install mosquitto-clients -y
 
+# Get the MQTT password from .env
+source .env
+
 # Subscribe in one terminal
-mosquitto_sub -h localhost -t "iaq/+/telemetry" -v
+mosquitto_sub -h localhost -u iaq -P "$MQTT_PASSWORD" -t "iaq/+/telemetry" -v
 
 # Publish test message in another terminal
-mosquitto_pub -h localhost -t "iaq/test/telemetry" -m '{"device_id":"test","co2_ppm":450}'
+mosquitto_pub -h localhost -u iaq -P "$MQTT_PASSWORD" -t "iaq/test/telemetry" -m '{"device_id":"test","co2_ppm":450}'
 ```
 
 ### 5.3 Verify database
@@ -246,16 +261,25 @@ Update the firmware to point to your Raspberry Pi:
    hostname -I
    ```
 
-2. Edit `firmware/nano-esp32-iaq/secrets.h`:
-   ```cpp
-   #define MQTT_SERVER "192.168.1.100"
+2. Get the MQTT password from `.env`:
+   ```bash
+   cat infra/.env | grep MQTT_PASSWORD
    ```
 
-3. Flash the firmware to your Arduino Nano ESP32
+3. Edit `firmware/nano-esp32-iaq/secrets.h`:
+   ```cpp
+   #define MQTT_HOST "192.168.1.100"
+   #define MQTT_PORT 1883
+   #define MQTT_USER "iaq"
+   #define MQTT_PASS "your_mqtt_password_from_env"
+   ```
 
-4. Watch for incoming data:
+4. Flash the firmware to your Arduino Nano ESP32
+
+5. Watch for incoming data:
    ```bash
-   mosquitto_sub -h localhost -t "iaq/+/telemetry" -v
+   source infra/.env
+   mosquitto_sub -h localhost -u iaq -P "$MQTT_PASSWORD" -t "iaq/+/telemetry" -v
    ```
 
 ## Service Access
@@ -264,9 +288,9 @@ From devices on the same network (replace IP as needed):
 
 | Service | URL/Address | Credentials |
 |---------|-------------|-------------|
-| Grafana | http://192.168.1.100:3000 | admin / admin |
-| MQTT Broker | 192.168.1.100:1883 | None (anonymous) |
-| TimescaleDB | 192.168.1.100:5432 | iaq / iaqpass |
+| Grafana | http://192.168.1.100:3000 | admin / (see `GRAFANA_ADMIN_PASSWORD` in .env) |
+| MQTT Broker | 192.168.1.100:1883 | iaq / (see `MQTT_PASSWORD` in .env) |
+| TimescaleDB | Internal only | Not exposed externally |
 
 ## Running as a System Service
 
@@ -381,7 +405,8 @@ docker compose up -d
 
 1. Check MQTT is receiving data:
    ```bash
-   mosquitto_sub -h localhost -t "#" -v
+   source infra/.env
+   mosquitto_sub -h localhost -u iaq -P "$MQTT_PASSWORD" -t "#" -v
    ```
 
 2. Verify sensor can reach Pi:
@@ -422,6 +447,51 @@ cd infra
 docker compose down
 docker compose up -d --build
 ```
+
+## Remote Access with Tailscale
+
+Tailscale provides secure remote access to your Pi from anywhere without port forwarding.
+
+### Install Tailscale on Raspberry Pi
+
+```bash
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up
+```
+
+Follow the authentication link to connect your Pi to your Tailscale account.
+
+### Install Tailscale on Client Devices
+
+- **Windows/Mac**: Download from https://tailscale.com/download
+- **Phone**: Install Tailscale app from App Store / Play Store
+- Log in with the same account as your Pi
+
+### Access Services Remotely
+
+After Tailscale is connected on both devices:
+
+```bash
+# Find your Pi's Tailscale IP
+tailscale ip -4
+```
+
+Then access services from anywhere:
+
+| Service | URL |
+|---------|-----|
+| Grafana | http://<pi-tailscale-ip>:3000 |
+| SSH | ssh user@<pi-tailscale-ip> |
+
+### Optional: Enable Tailscale SSH
+
+For passwordless SSH through Tailscale:
+
+```bash
+sudo tailscale up --ssh
+```
+
+Then SSH with: `ssh user@<pi-tailscale-hostname>`
 
 ## Backup and Restore
 

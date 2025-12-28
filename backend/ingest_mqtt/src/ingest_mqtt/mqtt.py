@@ -14,6 +14,8 @@ logger = logging.getLogger(__name__)
 MQTT_HOST = os.getenv("MQTT_HOST", "localhost")
 MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
 MQTT_TOPIC = os.getenv("MQTT_TOPIC", "iaq/+/telemetry")
+MQTT_USER = os.getenv("MQTT_USER")
+MQTT_PASSWORD = os.getenv("MQTT_PASSWORD")
 
 # Callback type for processing messages
 MessageHandler = Callable[[dict], None]
@@ -99,6 +101,11 @@ def create_client(on_message: MessageHandler) -> mqtt.Client:
         on_message: Callback function to handle parsed messages
     """
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+
+    # Set authentication if credentials provided
+    if MQTT_USER and MQTT_PASSWORD:
+        client.username_pw_set(MQTT_USER, MQTT_PASSWORD)
+        logger.info(f"MQTT authentication enabled for user: {MQTT_USER}")
 
     def on_connect(client, userdata, flags, reason_code, properties):
         if reason_code == 0:

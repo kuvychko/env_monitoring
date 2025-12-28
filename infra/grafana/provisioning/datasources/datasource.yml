@@ -8,7 +8,7 @@ datasources:
     database: iaq
     user: iaq
     secureJsonData:
-      password: iaqpass
+      password: $POSTGRES_PASSWORD
     jsonData:
       database: iaq
       sslmode: disable
