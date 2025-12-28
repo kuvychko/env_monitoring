@@ -4,11 +4,11 @@ This document describes the sensors used in the IAQ monitoring system, their spe
 
 ## Sensor Overview
 
-| Sensor | Measures | Interface | Manufacturer |
-|--------|----------|-----------|--------------|
-| [SPS30](#sensirion-sps30-particulate-matter) | Particulate matter (PM1, PM2.5, PM4, PM10) | I2C | Sensirion |
-| [BME280](#bosch-bme280-environmental) | Temperature, humidity, pressure | I2C | Bosch |
-| [PAS CO2](#infineon-xensiv-pas-co2) | Carbon dioxide concentration | I2C | Infineon |
+| Sensor | Measures | Interface | I2C Address | Manufacturer |
+|--------|----------|-----------|-------------|--------------|
+| [SPS30](#sensirion-sps30-particulate-matter) | Particulate matter (PM1, PM2.5, PM4, PM10) | I2C | 0x69 | Sensirion |
+| [BME280](#bosch-bme280-environmental) | Temperature, humidity, pressure | I2C | 0x77 | Bosch |
+| [PAS CO2](#infineon-xensiv-pas-co2) | Carbon dioxide concentration | I2C | 0x28 | Infineon |
 
 ```mermaid
 flowchart LR
