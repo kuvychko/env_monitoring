@@ -90,6 +90,9 @@ def parse_payload(payload: bytes) -> dict | None:
         # CO2 sensor diagnostics
         "co2_age_s": get_int("co2_age_s"),
         "co2_resets": get_int("co2_resets"),
+        # VOC sensor data
+        "voc_raw": get_int("voc_raw"),
+        "voc_index": get_int("voc_index"),
     }
 
 
