@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 IoT environmental monitoring system that collects indoor air quality (IAQ) data from Arduino Nano ESP32 sensors and stores it for visualization.
 
 **Data Flow:**
-1. Arduino Nano ESP32 reads sensors via I²C (PAS CO₂, SPS30, BME280)
+1. Arduino Nano ESP32 reads sensors via I²C (PAS CO₂, SPS30, BME280, SGP40)
 2. ESP32 publishes MQTT messages (1/min) over Wi-Fi
 3. Python ingestion service subscribes to MQTT and writes to Postgres
 4. Grafana provides dashboards
@@ -36,6 +36,8 @@ infra/                       # (planned) Docker Compose stack
    - pas-co2-ino (Infineon XENSIV PAS CO2)
    - Adafruit BME280 Library
    - Sensirion I2C SPS30 (+ Sensirion Core)
+   - Sensirion I2C SGP40 (+ Sensirion Core)
+   - Sensirion Gas Index Algorithm
    - PubSubClient (MQTT)
 4. Upload to Arduino Nano ESP32
 
@@ -62,6 +64,7 @@ docker compose down
   - `co2_ppm`, `temp_c`, `rh_pct`, `pressure_hpa`
   - `pm1_0_ugm3`, `pm2_5_ugm3`, `pm4_0_ugm3`, `pm10_ugm3`
   - `nc0_5_pcm3`, `nc1_0_pcm3`, `nc2_5_pcm3`, `nc4_0_pcm3`, `nc10_pcm3`, `typical_size_um`
+  - `voc_raw`, `voc_index` (SGP40 VOC sensor - raw SRAW signal and computed index 1-500)
   - `rssi_dbm`, `uptime_s`
   - `co2_age_s`, `co2_resets` (CO2 sensor diagnostics)
 

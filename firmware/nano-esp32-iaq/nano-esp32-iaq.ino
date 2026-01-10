@@ -2,13 +2,16 @@
  * nano-esp32-iaq.ino
  *
  * Indoor Air Quality sensor firmware for Arduino Nano ESP32
- * Reads: PAS CO2, BME280 (temp/humidity/pressure), SPS30 (particulate matter)
+ * Reads: PAS CO2, BME280 (temp/humidity/pressure), SPS30 (particulate matter),
+ *        SGP40 (VOC index)
  * Publishes: MQTT JSON telemetry every 60 seconds
  *
  * Required libraries:
  *   - pas-co2-ino (Infineon XENSIV PAS CO2)
  *   - Adafruit BME280 Library
  *   - Sensirion I2C SPS30 (+ Sensirion Core)
+ *   - Sensirion I2C SGP40 (+ Sensirion Core)
+ *   - Sensirion Gas Index Algorithm
  *   - PubSubClient (MQTT)
  */
 
@@ -24,6 +27,8 @@
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BME280.h>
 #include <SensirionI2cSps30.h>
+#include <SensirionI2CSgp40.h>
+#include <VOCGasIndexAlgorithm.h>
 
 #include "secrets.h"
 
@@ -41,6 +46,12 @@ typedef struct {
   float typicalSize;
 } SpsReading;
 
+// ---- SGP40 reading struct ----
+typedef struct {
+  uint16_t raw;      // Raw SRAW signal
+  int32_t voc_index; // VOC Index (1-500)
+} Sgp40Reading;
+
 // ---- Device Configuration ----
 #ifndef DEVICE_ID
 #define DEVICE_ID "nanoesp32_office"
@@ -50,6 +61,8 @@ typedef struct {
 PASCO2Ino co2(&Wire);
 Adafruit_BME280 bme;
 SensirionI2cSps30 sps;
+SensirionI2CSgp40 sgp;
+VOCGasIndexAlgorithm vocAlgorithm;
 WiFiClient wifiClient;
 PubSubClient mqtt(wifiClient);
 
@@ -60,6 +73,7 @@ static constexpr uint32_t PUBLISH_MS     = 60000;    // publish telemetry every 
 static constexpr uint32_t SPS_POLL_MS    = 1000;     // poll SPS30 ready flag ~1 Hz
 static constexpr uint32_t BME_POLL_MS    = 6000;     // poll BME280 every 6s (10 samples in 60s)
 static constexpr uint32_t CO2_POLL_MS    = 15000;    // poll CO2 sensor every 15s
+static constexpr uint32_t SGP_POLL_MS    = 6000;     // poll SGP40 every 6s (matches BME280)
 static constexpr uint32_t PRESS_UPDATE_MS = 30000;   // update pressure reference every 30s
 static constexpr uint32_t WIFI_RETRY_MS  = 5000;     // Wi-Fi reconnect interval
 static constexpr uint32_t MQTT_RETRY_MS  = 5000;     // MQTT reconnect interval
@@ -122,6 +136,13 @@ static int16_t co2Buf[CO2_BUF_SIZE];
 static uint8_t co2BufHead = 0;
 static uint8_t co2BufCount = 0;
 
+// ---- SGP40 ring buffer for averaging ----
+static constexpr uint8_t SGP_BUF_SIZE = 10;  // average over 10 readings (~60s at 6s interval)
+static Sgp40Reading sgpBuf[SGP_BUF_SIZE];
+static uint8_t sgpBufHead = 0;
+static uint8_t sgpBufCount = 0;
+static uint32_t lastSgpReadTime = 0;
+
 // Compute average of SPS30 readings in buffer
 static bool getSpsAverage(SpsReading& avg) {
   if (spsBufCount == 0) return false;
@@ -183,6 +204,21 @@ static int16_t getCo2Average() {
   return (int16_t)(sum / co2BufCount);
 }
 
+// Compute average of SGP40 readings in buffer
+static bool getSgp40Average(Sgp40Reading& avg) {
+  if (sgpBufCount == 0) return false;
+
+  uint32_t rawSum = 0;
+  int64_t vocSum = 0;
+  for (uint8_t i = 0; i < sgpBufCount; i++) {
+    rawSum += sgpBuf[i].raw;
+    vocSum += sgpBuf[i].voc_index;
+  }
+  avg.raw = (uint16_t)(rawSum / sgpBufCount);
+  avg.voc_index = (int32_t)(vocSum / sgpBufCount);
+  return true;
+}
+
 #ifdef NO_ERROR
 #undef NO_ERROR
 #endif
@@ -193,6 +229,7 @@ static uint32_t lastPublish = 0;
 static uint32_t lastSpsPoll = 0;
 static uint32_t lastBmePoll = 0;
 static uint32_t lastCo2Poll = 0;
+static uint32_t lastSgpPoll = 0;
 static uint32_t lastPressUpdate = 0;
 static uint32_t lastWifiCheck = 0;
 static uint32_t lastMqttCheck = 0;
@@ -344,6 +381,39 @@ static void pollBme280() {
   lastBmeReadTime = millis();
 }
 
+// ---- SGP40 polling (VOC sensor) ----
+static void pollSgp40() {
+  // Get current temp/humidity for compensation (from last BME reading)
+  float tempC = bme.readTemperature();
+  float rhPct = bme.readHumidity();
+
+  if (isnan(tempC) || isnan(rhPct)) {
+    Serial.println("SGP40: BME280 data unavailable for compensation");
+    return;
+  }
+
+  // Read raw signal with humidity compensation
+  uint16_t srawVoc = 0;
+  uint16_t err = sgp.measureRawSignal(rhPct, tempC, srawVoc);
+
+  if (err != 0) {
+    Serial.print("SGP40 read error: ");
+    Serial.println(err);
+    return;
+  }
+
+  // Process through VOC algorithm
+  int32_t vocIndex = vocAlgorithm.process(srawVoc);
+
+  // Add to ring buffer
+  sgpBuf[sgpBufHead] = {srawVoc, vocIndex};
+  sgpBufHead = (sgpBufHead + 1) % SGP_BUF_SIZE;
+  if (sgpBufCount < SGP_BUF_SIZE) {
+    sgpBufCount++;
+  }
+  lastSgpReadTime = millis();
+}
+
 // ---- CO2 polling with soft reset recovery ----
 static void pollCo2() {
   int16_t reading = 0;
@@ -452,6 +522,12 @@ void publishTelemetry() {
   SpsReading spsAvg;
   const bool spsOk = getSpsAverage(spsAvg);
 
+  // Get averaged SGP40 values from ring buffer
+  const bool sgpValid = (sgpBufCount > 0) && ((now - lastSgpReadTime) < 60000);
+  Sgp40Reading sgpAvg;
+  const int vocRaw = (sgpValid && getSgp40Average(sgpAvg)) ? (int)sgpAvg.raw : -1;
+  const int vocIndex = (sgpValid && getSgp40Average(sgpAvg)) ? (int)sgpAvg.voc_index : -1;
+
   // Build timestamp
   char ts[32];
   getTimestamp(ts, sizeof(ts));
@@ -460,7 +536,7 @@ void publishTelemetry() {
   const uint32_t co2AgeS = (now - lastCo2ReadTime) / 1000;
 
   // Build JSON payload (with diagnostic fields)
-  char payload[896];
+  char payload[960];
   int len = snprintf(payload, sizeof(payload),
     "{"
     "\"device_id\":\"%s\","
@@ -479,6 +555,8 @@ void publishTelemetry() {
     "\"nc4_0_pcm3\":%.1f,"
     "\"nc10_pcm3\":%.1f,"
     "\"typical_size_um\":%.2f,"
+    "\"voc_raw\":%d,"
+    "\"voc_index\":%d,"
     "\"rssi_dbm\":%d,"
     "\"uptime_s\":%lu,"
     "\"co2_age_s\":%lu,"
@@ -500,6 +578,8 @@ void publishTelemetry() {
     spsOk ? spsAvg.nc4p0 : -1.0f,
     spsOk ? spsAvg.nc10p0 : -1.0f,
     spsOk ? spsAvg.typicalSize : -1.0f,
+    vocRaw,
+    vocIndex,
     WiFi.RSSI(),
     now / 1000,
     co2AgeS,
@@ -593,6 +673,20 @@ void setup() {
   }
   Serial.println("SPS30 OK");
 
+  // --- SGP40 init ---
+  Serial.println("Initializing SGP40...");
+  sgp.begin(Wire);
+  uint16_t serialNumber[3];
+  uint16_t sgpErr = sgp.getSerialNumber(serialNumber, 3);
+  if (sgpErr == 0) {
+    Serial.printf("SGP40 serial: %04X%04X%04X\n",
+                  serialNumber[0], serialNumber[1], serialNumber[2]);
+  } else {
+    Serial.println("SGP40 init warning: could not read serial");
+  }
+  // VOC algorithm auto-initializes, needs ~60s conditioning for stable readings
+  Serial.println("SGP40 OK (VOC Index needs ~60s conditioning)");
+
   // --- WiFi ---
   connectWiFi();
 
@@ -608,12 +702,7 @@ void setup() {
 
   // --- Watchdog Timer ---
   Serial.println("Initializing watchdog timer...");
-  esp_task_wdt_config_t wdt_config = {
-    .timeout_ms = WDT_TIMEOUT_S * 1000,
-    .idle_core_mask = (1 << portNUM_PROCESSORS) - 1,  // all cores
-    .trigger_panic = true
-  };
-  esp_task_wdt_init(&wdt_config);
+  esp_task_wdt_init(WDT_TIMEOUT_S, true);  // timeout in seconds, panic on timeout
   esp_task_wdt_add(NULL);  // add current task to watchdog
   Serial.println("Watchdog OK");
 
@@ -626,11 +715,13 @@ void setup() {
   lastSpsPoll = now;
   lastBmePoll = now;
   lastCo2Poll = now;
+  lastSgpPoll = now;
   lastPressUpdate = now;
 
   // Take initial sensor readings to populate buffers
   pollBme280();
   pollCo2();
+  pollSgp40();
 }
 
 void loop() {
@@ -669,19 +760,25 @@ void loop() {
     pollBme280();
   }
 
-  // 5) Poll CO2 every 15s (with soft reset recovery)
+  // 5) Poll SGP40 every 6s (same rate as BME280)
+  if (now - lastSgpPoll >= SGP_POLL_MS) {
+    lastSgpPoll += SGP_POLL_MS;
+    pollSgp40();
+  }
+
+  // 6) Poll CO2 every 15s (with soft reset recovery)
   if (now - lastCo2Poll >= CO2_POLL_MS) {
     lastCo2Poll += CO2_POLL_MS;
     pollCo2();
   }
 
-  // 6) Update pressure reference every 30s (separate from CO2 read)
+  // 7) Update pressure reference every 30s (separate from CO2 read)
   if (now - lastPressUpdate >= PRESS_UPDATE_MS) {
     lastPressUpdate += PRESS_UPDATE_MS;
     updatePressureRef();
   }
 
-  // 7) Publish telemetry every 60s
+  // 8) Publish telemetry every 60s
   if (now - lastPublish >= PUBLISH_MS) {
     lastPublish += PUBLISH_MS;
     publishTelemetry();

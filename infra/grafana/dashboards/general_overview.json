@@ -95,17 +95,17 @@
             "mode": "absolute",
             "steps": [
               { "color": "green", "value": null },
-              { "color": "yellow", "value": 12 },
-              { "color": "orange", "value": 35 },
-              { "color": "red", "value": 55 }
+              { "color": "yellow", "value": 100 },
+              { "color": "orange", "value": 200 },
+              { "color": "red", "value": 300 }
             ]
           },
-          "unit": "µg/m³"
+          "unit": "none"
         },
         "overrides": []
       },
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
-      "id": 2,
+      "id": 7,
       "options": {
         "legend": { "calcs": ["mean", "lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true },
         "tooltip": { "mode": "multi", "sort": "none" }
@@ -116,11 +116,11 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "SELECT\n  time AS \"time\",\n  pm2_5_ugm3 AS \"PM2.5\"\nFROM iaq_readings\nWHERE $__timeFilter(time)\nORDER BY time",
+          "rawSql": "SELECT\n  time AS \"time\",\n  voc_index AS \"VOC Index\"\nFROM iaq_readings\nWHERE $__timeFilter(time)\nORDER BY time",
           "refId": "A"
         }
       ],
-      "title": "PM2.5 (µg/m³)",
+      "title": "VOC Index",
       "type": "timeseries"
     },
     {
@@ -179,7 +179,7 @@
           "refId": "A"
         }
       ],
-      "title": "Total PM (all sizes)",
+      "title": "Particulate Matter (µg/m³)",
       "type": "timeseries"
     },
     {
@@ -354,5 +354,5 @@
   "timezone": "browser",
   "title": "Overview",
   "uid": "general-overview",
-  "version": 1
+  "version": 2
 }
