@@ -9,6 +9,8 @@ This document describes the sensors used in the IAQ monitoring system, their spe
 | [SPS30](#sensirion-sps30-particulate-matter) | Particulate matter (PM1, PM2.5, PM4, PM10) | I2C | 0x69 | Sensirion |
 | [BME280](#bosch-bme280-environmental) | Temperature, humidity, pressure | I2C | 0x77 | Bosch |
 | [PAS CO2](#infineon-xensiv-pas-co2) | Carbon dioxide concentration | I2C | 0x28 | Infineon |
+| [SGP40](#sensirion-sgp40-voc) | VOC index | I2C | 0x59 | Sensirion |
+| [ST7735 TFT](#st7735-tft-display) | Display | SPI | N/A | Various |
 
 ```mermaid
 flowchart LR
@@ -418,3 +420,138 @@ For reference, here are common air quality thresholds:
 |-----------|-------------------|
 | Temperature | 20-26°C (68-79°F) |
 | Humidity | 30-60% RH |
+
+---
+
+## Sensirion SGP40 (VOC)
+
+### Specifications
+
+| Parameter | Value |
+|-----------|-------|
+| Technology | Metal oxide (MOx) |
+| VOC Index range | 1 - 500 |
+| Raw signal range | 0 - 65535 (SRAW) |
+| Conditioning time | ~60 seconds |
+| I2C Address | 0x59 |
+
+### Output Values
+
+| Output | Unit | Description |
+|--------|------|-------------|
+| `voc_raw` | SRAW | Raw sensor signal (0-65535) |
+| `voc_index` | index | Processed VOC Index (1-500) |
+
+### VOC Index Interpretation
+
+| Index | Air Quality |
+|-------|-------------|
+| 1-100 | Good |
+| 100-150 | Moderate |
+| 150-250 | Poor |
+| 250-400 | Very Poor |
+| 400-500 | Extremely Poor |
+
+### Limitations & Caveats
+
+1. **Requires ~60 seconds conditioning** after power-on
+2. **Relative measurement** - measures change from baseline, not absolute VOC concentration
+3. **Temperature/humidity compensation** - uses BME280 readings for accuracy
+4. **Not specific to individual VOCs** - responds to broad range of volatile compounds
+
+---
+
+## ST7735 TFT Display
+
+### Specifications
+
+| Parameter | Value |
+|-----------|-------|
+| Display size | 1.8 inch |
+| Resolution | 160 x 128 pixels |
+| Color depth | 16-bit RGB565 |
+| Interface | SPI |
+| Backlight | LED |
+
+### Wiring to Arduino Nano ESP32
+
+| Display Pin | Arduino Pin | Notes |
+|-------------|-------------|-------|
+| VCC | 3.3V | **NOT 5V!** |
+| GND | GND | |
+| CS | D10 | Chip Select |
+| RST | D9 | Reset |
+| DC | D8 | Data/Command |
+| SDA/MOSI | D11 | SPI Data |
+| SCL/SCK | D13 | SPI Clock |
+| BLK | 3.3V | Backlight (always on) |
+
+**Important:** Use Arduino pin names (D8, D9, D10, D11, D13), NOT GPIO numbers.
+
+### Required Libraries
+
+- Adafruit ST7735 and ST7789 Library
+- Adafruit GFX Library
+
+### Configuration
+
+```cpp
+// Pin definitions using Arduino names
+#define TFT_CS    D10
+#define TFT_RST   D9
+#define TFT_DC    D8
+#define TFT_MOSI  D11
+#define TFT_SCLK  D13
+
+// Software SPI for reliability
+Adafruit_ST7735 tft = Adafruit_ST7735(TFT_CS, TFT_DC, TFT_MOSI, TFT_SCLK, TFT_RST);
+
+// Initialization
+tft.initR(INITR_GREENTAB);  // Use GREENTAB for this display
+tft.setRotation(1);         // Landscape: 160x128
+```
+
+### Dashboard Display
+
+The firmware displays a single dashboard view showing all sensor values:
+
+```
++----------------------------------+
+| IAQ MONITOR        [W] [M]      |  Header with WiFi/MQTT status
++----------------------------------+
+| CO2          856 ppm            |  CO2 with color coding
++----------------------------------+
+| PM1.0   3.2    PM10   4.1       |  Mass concentrations (smallest/largest)
+| NC0.5   8.5    NC10  10.2       |  Number concentrations (smallest/largest)
++----------------------------------+
+| Temp  22.5C    RH    48%        |  Environmental
+| Press 1013     VOC   142        |  Pressure + VOC (color coded)
++----------------------------------+
+| WiFi -52dB     Up 2h15m         |  Status line
++----------------------------------+
+```
+
+**Status indicators:** Small squares in the header show connection status:
+- `[W]` = WiFi (green = connected, red = disconnected)
+- `[M]` = MQTT (green = connected, red = disconnected)
+
+### Color-Coded Thresholds
+
+| Metric | Good (Green) | Warning (Yellow) | Bad (Red) |
+|--------|--------------|------------------|-----------|
+| CO2 | <800 ppm | 800-1200 ppm | >1200 ppm |
+| VOC Index | <150 | 150-250 | >250 |
+
+### Flicker-Free Updates
+
+The display uses a two-phase rendering approach to eliminate flicker:
+
+1. **Static elements** (labels, dividers) are drawn once at startup
+2. **Dynamic values** are updated by overwriting with background color (`setTextColor(fg, bg)`)
+
+This avoids full screen clears that cause visible blanking.
+
+### Update Timing
+
+- Display updates: Every 60 seconds (synced with MQTT telemetry publish)
+- Static layout: Drawn once at startup

@@ -23,6 +23,10 @@
 #include <esp_task_wdt.h>
 #include <PubSubClient.h>
 
+#include <SPI.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_ST7735.h>
+
 #include <pas-co2-ino.hpp>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BME280.h>
@@ -65,6 +69,15 @@ SensirionI2CSgp40 sgp;
 VOCGasIndexAlgorithm vocAlgorithm;
 WiFiClient wifiClient;
 PubSubClient mqtt(wifiClient);
+
+// TFT Display - use Arduino pin names (NOT GPIO numbers)
+#define TFT_CS    D10
+#define TFT_RST   D9
+#define TFT_DC    D8
+#define TFT_MOSI  D11
+#define TFT_SCLK  D13
+
+Adafruit_ST7735 tft = Adafruit_ST7735(TFT_CS, TFT_DC, TFT_MOSI, TFT_SCLK, TFT_RST);
 
 // ---- Settings ----
 static constexpr uint32_t BAUD           = 115200;
@@ -240,6 +253,163 @@ static int16_t lastValidCo2 = 0;         // last successful CO2 reading
 static uint32_t lastCo2ReadTime = 0;     // millis() when last valid reading was obtained
 static uint8_t co2FailCount = 0;         // consecutive failure count
 static uint16_t co2ResetCount = 0;       // total soft resets performed
+
+// ---- Display colors (RGB565) ----
+#define COLOR_BG        ST77XX_BLACK
+#define COLOR_HEADER    0x000F    // Dark blue
+#define COLOR_TEXT      ST77XX_WHITE
+#define COLOR_LABEL     0x7BEF    // Light grey
+#define COLOR_GOOD      ST77XX_GREEN
+#define COLOR_WARN      ST77XX_YELLOW
+#define COLOR_BAD       ST77XX_RED
+#define COLOR_GRID      0x4208    // Dark grey
+
+// ---- Display helper functions ----
+
+// Get color for CO2 value based on thresholds
+static uint16_t getCo2Color(int16_t ppm) {
+  if (ppm < 0) return COLOR_LABEL;      // Invalid
+  if (ppm < 800) return COLOR_GOOD;     // Good
+  if (ppm < 1200) return COLOR_WARN;    // Warning
+  return COLOR_BAD;                      // Bad
+}
+
+// Get color for VOC index based on thresholds
+static uint16_t getVocColor(int32_t idx) {
+  if (idx < 0) return COLOR_LABEL;      // Invalid
+  if (idx < 150) return COLOR_GOOD;     // Good
+  if (idx < 250) return COLOR_WARN;     // Warning
+  return COLOR_BAD;                      // Bad
+}
+
+// Draw static dashboard elements (labels, dividers) - called once in setup
+static void drawDashboardStatic() {
+  tft.fillScreen(COLOR_BG);
+
+  // Header
+  tft.fillRect(0, 0, 160, 16, COLOR_HEADER);
+  tft.setTextColor(COLOR_TEXT);
+  tft.setTextSize(1);
+  tft.setCursor(4, 4);
+  tft.print("IAQ MONITOR");
+
+  // Labels (drawn once, never change)
+  tft.setTextColor(COLOR_LABEL);
+  tft.setCursor(4, 20);   tft.print("CO2");
+  tft.setCursor(4, 44);   tft.print("PM1.0");
+  tft.setCursor(84, 44);  tft.print("PM10");
+  tft.setCursor(4, 56);   tft.print("NC0.5");
+  tft.setCursor(84, 56);  tft.print("NC10");
+  tft.setCursor(4, 76);   tft.print("Temp");
+  tft.setCursor(84, 76);  tft.print("RH");
+  tft.setCursor(4, 88);   tft.print("Press");
+  tft.setCursor(84, 88);  tft.print("VOC");
+  tft.setCursor(4, 108);  tft.print("WiFi");
+  tft.setCursor(84, 108); tft.print("Up");
+
+  // Divider lines
+  tft.drawFastHLine(0, 40, 160, COLOR_GRID);
+  tft.drawFastHLine(0, 72, 160, COLOR_GRID);
+  tft.drawFastHLine(0, 104, 160, COLOR_GRID);
+}
+
+// Update dashboard values only (called after each MQTT publish)
+static void updateDashboardValues() {
+  // Get sensor values
+  int16_t co2Val = (co2BufCount > 0) ? getCo2Average() : -1;
+  BmeReading bmeAvg;
+  bool bmeOk = getBmeAverage(bmeAvg);
+  SpsReading spsAvg;
+  bool spsOk = getSpsAverage(spsAvg);
+  Sgp40Reading sgpAvg;
+  bool sgpOk = getSgp40Average(sgpAvg);
+
+  // Status indicators (header)
+  uint16_t wifiColor = (WiFi.status() == WL_CONNECTED) ? COLOR_GOOD : COLOR_BAD;
+  uint16_t mqttColor = mqtt.connected() ? COLOR_GOOD : COLOR_BAD;
+  tft.fillRect(136, 4, 8, 8, wifiColor);
+  tft.fillRect(148, 4, 8, 8, mqttColor);
+
+  // CO2 value (large, y=18) - use text with background to avoid flicker
+  tft.setTextSize(2);
+  tft.setCursor(40, 18);
+  tft.setTextColor(getCo2Color(co2Val), COLOR_BG);
+  if (co2Val >= 0) {
+    char buf[12];
+    snprintf(buf, sizeof(buf), "%4d ppm", co2Val);
+    tft.print(buf);
+  } else {
+    tft.print("---- ppm");
+  }
+
+  // PM values (y=44)
+  tft.setTextSize(1);
+  tft.setTextColor(COLOR_TEXT, COLOR_BG);
+  tft.setCursor(40, 44);
+  if (spsOk) {
+    char buf[8]; snprintf(buf, sizeof(buf), "%5.1f", spsAvg.mc1p0);
+    tft.print(buf);
+  } else tft.print("  ---");
+
+  tft.setCursor(116, 44);
+  if (spsOk) {
+    char buf[8]; snprintf(buf, sizeof(buf), "%5.1f", spsAvg.mc10p0);
+    tft.print(buf);
+  } else tft.print("  ---");
+
+  // NC values (y=56)
+  tft.setCursor(40, 56);
+  if (spsOk) {
+    char buf[8]; snprintf(buf, sizeof(buf), "%5.1f", spsAvg.nc0p5);
+    tft.print(buf);
+  } else tft.print("  ---");
+
+  tft.setCursor(116, 56);
+  if (spsOk) {
+    char buf[8]; snprintf(buf, sizeof(buf), "%5.1f", spsAvg.nc10p0);
+    tft.print(buf);
+  } else tft.print("  ---");
+
+  // Environmental values (y=76, y=88)
+  tft.setCursor(40, 76);
+  if (bmeOk) {
+    char buf[8]; snprintf(buf, sizeof(buf), "%5.1fC", bmeAvg.temp_c);
+    tft.print(buf);
+  } else tft.print("  ---C");
+
+  tft.setCursor(116, 76);
+  if (bmeOk) {
+    char buf[8]; snprintf(buf, sizeof(buf), "%3d%%", (int)bmeAvg.rh_pct);
+    tft.print(buf);
+  } else tft.print("---%");
+
+  tft.setCursor(40, 88);
+  if (bmeOk) {
+    char buf[8]; snprintf(buf, sizeof(buf), "%4d", (int)bmeAvg.pressure_hpa);
+    tft.print(buf);
+  } else tft.print("----");
+
+  int32_t vocVal = sgpOk ? sgpAvg.voc_index : -1;
+  tft.setTextColor(getVocColor(vocVal), COLOR_BG);
+  tft.setCursor(116, 88);
+  if (vocVal >= 0) {
+    char buf[8]; snprintf(buf, sizeof(buf), "%4ld", vocVal);
+    tft.print(buf);
+  } else tft.print(" ---");
+
+  // Status line (y=108)
+  tft.setTextColor(COLOR_TEXT, COLOR_BG);
+  tft.setCursor(32, 108);
+  char rssi[8]; snprintf(rssi, sizeof(rssi), "%4ddB", WiFi.RSSI());
+  tft.print(rssi);
+
+  uint32_t uptime = millis() / 1000;
+  uint32_t hrs = uptime / 3600;
+  uint32_t mins = (uptime % 3600) / 60;
+  tft.setCursor(104, 108);
+  char up[12]; snprintf(up, sizeof(up), "%3luh%02lum", hrs, mins);
+  tft.print(up);
+}
 
 // ---- Wi-Fi functions ----
 void connectWiFi() {
@@ -595,6 +765,9 @@ void publishTelemetry() {
   } else {
     Serial.println("MQTT publish failed!");
   }
+
+  // Update dashboard display with current values
+  updateDashboardValues();
 }
 
 void setup() {
@@ -687,6 +860,17 @@ void setup() {
   // VOC algorithm auto-initializes, needs ~60s conditioning for stable readings
   Serial.println("SGP40 OK (VOC Index needs ~60s conditioning)");
 
+  // --- TFT Display init ---
+  Serial.println("Initializing TFT display...");
+  tft.initR(INITR_GREENTAB);
+  tft.setRotation(1);  // Landscape 160x128
+  tft.fillScreen(ST77XX_BLACK);
+  tft.setTextColor(ST77XX_WHITE);
+  tft.setTextSize(1);
+  tft.setCursor(20, 56);
+  tft.print("Initializing...");
+  Serial.println("TFT OK");
+
   // --- WiFi ---
   connectWiFi();
 
@@ -722,6 +906,10 @@ void setup() {
   pollBme280();
   pollCo2();
   pollSgp40();
+
+  // Draw static dashboard layout and show initial values
+  drawDashboardStatic();
+  updateDashboardValues();
 }
 
 void loop() {
@@ -778,7 +966,7 @@ void loop() {
     updatePressureRef();
   }
 
-  // 8) Publish telemetry every 60s
+  // 8) Publish telemetry every 60s (also updates display)
   if (now - lastPublish >= PUBLISH_MS) {
     lastPublish += PUBLISH_MS;
     publishTelemetry();
