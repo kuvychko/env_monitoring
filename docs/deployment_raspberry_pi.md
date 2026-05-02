@@ -11,13 +11,14 @@ Complete guide for deploying the Indoor Air Quality monitoring stack on Raspberr
 
 ## Architecture Overview
 
-The stack consists of 4 services:
+The stack consists of 5 services:
 
 | Service | Port | Description |
 |---------|------|-------------|
-| Mosquitto | 1883 | MQTT broker for sensor data |
+| Mosquitto | 1883 | MQTT broker for indoor sensor data |
 | TimescaleDB | 5432 | PostgreSQL with time-series extensions |
-| Ingest | - | Python service: MQTT → Database |
+| ingest_mqtt | - | Python service: MQTT → Database (indoor) |
+| ingest_purpleair | - | Python service: PurpleAir HTTP API → Database (outdoor) |
 | Grafana | 3000 | Dashboards and visualization |
 
 All images have native ARM64 support.
@@ -174,6 +175,20 @@ cat .env  # Review the generated passwords
 - `GRAFANA_ADMIN_PASSWORD` for Grafana login
 - `MQTT_PASSWORD` for the Arduino firmware
 
+**PurpleAir credentials** must be added to `infra/.env`:
+
+```bash
+PURPLEAIR_API_KEY=<your_account_read_api_key>
+PURPLEAIR_SENSOR_INDEX=<your_sensor_index>
+PURPLEAIR_READ_KEY=<your_per_sensor_read_key>
+```
+
+- `PURPLEAIR_API_KEY` — your account-level Read API key (from purpleair.com → Profile → API access)
+- `PURPLEAIR_SENSOR_INDEX` — numeric sensor ID shown on the sensor detail page
+- `PURPLEAIR_READ_KEY` — per-sensor read key (required for private sensors; found on sensor detail page)
+
+The `ingest_purpleair` service polls the PurpleAir history endpoint every 120 seconds, checks the last stored timestamp in the DB, and fetches all readings since then. On first start it backfills up to `PURPLEAIR_LOOKBACK_HOURS` (default 24h) of history.
+
 ### 4.3 Start the services
 
 ```bash
@@ -202,7 +217,7 @@ Press `Ctrl+C` to exit logs.
 docker compose ps
 ```
 
-All 4 services should show `running`.
+All 5 services should show `running`.
 
 ### 5.2 Test MQTT broker
 
@@ -320,7 +335,7 @@ systemctl is-enabled containerd  # Should output: enabled
 ```bash
 sudo reboot
 # After reboot, SSH back in
-docker compose ps  # All 4 services should show "running"
+docker compose ps  # All 5 services should show "running"
 ```
 
 ### If Containers Don't Auto-Start
@@ -362,8 +377,14 @@ docker compose up -d --build
 # Check database row count
 docker exec postgres psql -U iaq -d iaq -c "SELECT COUNT(*) FROM iaq_readings"
 
-# Recent readings
+# Recent indoor readings
 docker exec postgres psql -U iaq -d iaq -c "SELECT time, device_id, co2_ppm, temp_c FROM iaq_readings ORDER BY time DESC LIMIT 5"
+
+# Recent outdoor readings
+docker exec postgres psql -U iaq -d iaq -c "SELECT time, pm2_5_atm, temp_c, humidity FROM purpleair_readings ORDER BY time DESC LIMIT 5"
+
+# PurpleAir ingest logs
+docker compose logs -f ingest_purpleair
 
 # System resource usage
 docker stats --no-stream
@@ -446,6 +467,29 @@ docker compose up -d
 3. Check ingest logs:
    ```bash
    docker compose logs -f ingest
+   ```
+
+### PurpleAir data not arriving
+
+1. Check logs for API errors:
+   ```bash
+   docker compose logs -f ingest_purpleair
+   ```
+
+2. Common errors:
+   - `403 ApiKeyInvalidError` — wrong `PURPLEAIR_API_KEY` (must be account-level, not per-sensor read key)
+   - `403 SensorNotFoundError` with read_key — wrong `PURPLEAIR_READ_KEY` or `PURPLEAIR_SENSOR_INDEX`
+   - `429` — rate limit exceeded; service will back off automatically
+
+3. Verify outdoor data in DB:
+   ```bash
+   docker exec postgres psql -U iaq -d iaq -c "SELECT COUNT(*), MAX(time) FROM purpleair_readings"
+   ```
+
+4. If the `purpleair_readings` table doesn't exist on an existing DB, apply the migration:
+   ```bash
+   docker exec -i postgres psql -U iaq -d iaq < infra/postgres/init/004_add_purpleair.sql
+   docker exec -i postgres psql -U iaq -d iaq < infra/postgres/init/005_purpleair_drop_unavailable_cols.sql
    ```
 
 ### Database disk space
@@ -548,9 +592,14 @@ cat backup_20240101.sql | docker exec -i postgres psql -U iaq -d iaq
                                        │                 │ subscribe        │
                                        │                 ↓                  │
                                        │  ┌─────────────────────────────┐   │
-                                       │  │  Ingest Service (Python)   │   │
+                                       │  │  ingest_mqtt (Python)      │   │
                                        │  └──────────────┬──────────────┘   │
                                        │                 │ INSERT           │
+┌─────────────────┐     HTTPS          │                 ↓                  │
+│  PurpleAir API  │ ←─────────────────── ┌─────────────────────────────┐   │
+│  (cloud)        │ ─────────────────→ │  │  ingest_purpleair (Python) │   │
+└─────────────────┘    history poll    │  └──────────────┬──────────────┘   │
+                       every 120s      │                 │ INSERT           │
                                        │                 ↓                  │
                                        │  ┌─────────────────────────────┐   │
                                        │  │  TimescaleDB (database)    │   │

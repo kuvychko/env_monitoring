@@ -43,6 +43,24 @@ services:
       - postgres
     restart: unless-stopped
 
+  ingest_purpleair:
+    build: ../backend/ingest_purpleair
+    container_name: ingest_purpleair
+    environment:
+      PURPLEAIR_API_KEY: ${PURPLEAIR_API_KEY}
+      PURPLEAIR_SENSOR_INDEX: ${PURPLEAIR_SENSOR_INDEX}
+      PURPLEAIR_READ_KEY: ${PURPLEAIR_READ_KEY}
+      PURPLEAIR_POLL_INTERVAL: "120"
+      PURPLEAIR_LOOKBACK_HOURS: "24"
+      PG_HOST: postgres
+      PG_PORT: "5432"
+      PG_DB: iaq
+      PG_USER: iaq
+      PG_PASSWORD: ${POSTGRES_PASSWORD}
+    depends_on:
+      - postgres
+    restart: unless-stopped
+
   grafana:
     image: grafana/grafana:latest
     container_name: grafana

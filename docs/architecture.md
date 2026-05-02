@@ -1,10 +1,10 @@
 # System Architecture
 
-This document describes the architecture of the IoT Environmental Monitoring System, which collects indoor air quality (IAQ) data from sensors and provides real-time visualization.
+This document describes the architecture of the IoT Environmental Monitoring System, which collects indoor and outdoor air quality data from sensors and provides real-time visualization.
 
 ## System Overview
 
-The system follows a layered architecture with clear separation of concerns:
+The system follows a layered architecture with two parallel data flows — indoor (MQTT) and outdoor (PurpleAir HTTP API):
 
 ```mermaid
 flowchart TB
@@ -12,7 +12,9 @@ flowchart TB
         CO2[PAS CO2 Sensor]
         BME[BME280 Sensor]
         SPS[SPS30 Sensor]
+        SGP[SGP40 VOC Sensor]
         ESP[Arduino Nano ESP32]
+        PA[PurpleAir Outdoor Sensor]
     end
 
     subgraph Firmware["Firmware Layer"]
@@ -22,14 +24,15 @@ flowchart TB
     end
 
     subgraph Network["Network Layer"]
-        WIFI[WiFi]
+        WIFI[WiFi / MQTT]
         NTP[NTP Time Sync]
-        MQTT[MQTT Protocol]
+        HTTP[PurpleAir HTTP API]
     end
 
     subgraph Backend["Backend Layer"]
         MOSQ[Mosquitto Broker]
-        INGEST[Python Ingest Service]
+        INGEST[ingest_mqtt service]
+        PAINGEST[ingest_purpleair service]
         DB[(TimescaleDB)]
     end
 
@@ -41,15 +44,18 @@ flowchart TB
     CO2 --> ESP
     BME --> ESP
     SPS --> ESP
+    SGP --> ESP
     ESP --> POLL
     POLL --> CACHE
     CACHE --> PUB
     PUB --> WIFI
     WIFI --> NTP
-    WIFI --> MQTT
-    MQTT --> MOSQ
+    WIFI --> MOSQ
     MOSQ --> INGEST
     INGEST --> DB
+    PA --> HTTP
+    HTTP --> PAINGEST
+    PAINGEST --> DB
     DB --> GRAF
     GRAF --> DASH
 ```
@@ -60,13 +66,14 @@ flowchart TB
 
 ### Sensors
 
-The system uses three environmental sensors connected to an Arduino Nano ESP32 microcontroller:
+The system uses four environmental sensors connected to an Arduino Nano ESP32 microcontroller:
 
 | Sensor | Manufacturer | Measurements | Interface |
 |--------|--------------|--------------|-----------|
 | **PAS CO2** | Infineon XENSIV | CO2 concentration (ppm) | I2C |
 | **BME280** | Bosch/Adafruit | Temperature, Humidity, Pressure | I2C |
-| **SPS30** | Sensirion | Particulate Matter (PM1.0-PM10), Particle Counts | I2C |
+| **SPS30** | Sensirion | Particulate Matter (PM1.0–PM10), Particle Counts | I2C |
+| **SGP40** | Sensirion | VOC Index (1–500), raw SRAW signal | I2C |
 
 ### I2C Bus Topology
 
@@ -77,14 +84,16 @@ flowchart LR
     end
 
     subgraph Sensors["Sensor Bus"]
-        CO2["PAS CO2<br/>CO2 ppm"]
+        CO2["PAS CO2<br/>0x28<br/>CO2 ppm"]
         BME["BME280<br/>0x77<br/>Temp/RH/Pressure"]
         SPS["SPS30<br/>0x69<br/>PM/Particles"]
+        SGP["SGP40<br/>0x59<br/>VOC Index"]
     end
 
     I2C <--> CO2
     I2C <--> BME
     I2C <--> SPS
+    I2C <--> SGP
 ```
 
 ### Sensor Capabilities
@@ -115,6 +124,10 @@ mindmap
                 NC4.0
                 NC10
             Typical Particle Size
+        SGP40
+            Raw SRAW signal 0–65535
+            VOC Index 1–500
+            Compensated by temp & RH
 ```
 
 ---
@@ -308,7 +321,7 @@ sequenceDiagram
 
 ```mermaid
 flowchart TB
-    subgraph Docker["Docker Compose Stack"]
+    subgraph Docker["Docker Compose Stack (5 services)"]
         subgraph mosq["Mosquitto"]
             MQTT_SVC["eclipse-mosquitto:2<br/>Port: 1883"]
         end
@@ -317,8 +330,12 @@ flowchart TB
             DB_SVC["timescale/timescaledb:pg16<br/>Port: 5432"]
         end
 
-        subgraph ingest["Ingest Service"]
+        subgraph ingest["ingest_mqtt"]
             PY_SVC["python:3.12-slim<br/>Custom build"]
+        end
+
+        subgraph paingest["ingest_purpleair"]
+            PA_SVC["python:3.12-slim<br/>Custom build"]
         end
 
         subgraph graf["Grafana"]
@@ -336,6 +353,8 @@ flowchart TB
     ESP32["ESP32 Devices"] -->|MQTT| MQTT_SVC
     MQTT_SVC --> PY_SVC
     PY_SVC --> DB_SVC
+    PA_API["PurpleAir API"] -->|HTTP poll| PA_SVC
+    PA_SVC --> DB_SVC
     DB_SVC --> GRAF_SVC
 
     MQTT_SVC --> V_MOSQ
@@ -350,24 +369,29 @@ flowchart TB
 flowchart LR
     subgraph External["External"]
         ESP[ESP32 Devices]
+        PA_API[PurpleAir API]
         USER[Web Browser]
     end
 
     subgraph Services["Docker Services"]
         MOSQ[Mosquitto<br/>:1883]
         PG[PostgreSQL<br/>:5432]
-        INGEST[Ingest<br/>internal]
+        INGEST[ingest_mqtt<br/>internal]
+        PAINGEST[ingest_purpleair<br/>internal]
         GRAF[Grafana<br/>:3000]
     end
 
     ESP -->|MQTT| MOSQ
     MOSQ --> INGEST
     INGEST --> PG
+    PA_API -->|HTTP poll| PAINGEST
+    PAINGEST --> PG
     PG --> GRAF
     USER -->|HTTP| GRAF
 
     INGEST -.->|depends_on| MOSQ
     INGEST -.->|depends_on| PG
+    PAINGEST -.->|depends_on| PG
     GRAF -.->|depends_on| PG
 ```
 
@@ -496,29 +520,33 @@ flowchart TB
 
 ### Entity Relationship
 
+Two hypertables store all sensor readings. See `docs/db_schema.md` for full column listings.
+
 ```mermaid
 erDiagram
     IAQ_READINGS {
         timestamptz time PK "NOT NULL - Hypertable key"
-        text device_id PK "NOT NULL - Sensor identifier"
-        integer co2_ppm "CO2 concentration"
-        real temp_c "Temperature"
-        real rh_pct "Relative humidity"
-        real pressure_hpa "Barometric pressure"
-        real pm1_0_ugm3 "PM1.0 mass"
-        real pm2_5_ugm3 "PM2.5 mass"
-        real pm4_0_ugm3 "PM4.0 mass"
-        real pm10_ugm3 "PM10 mass"
-        real nc0_5_pcm3 "NC0.5 count"
-        real nc1_0_pcm3 "NC1.0 count"
-        real nc2_5_pcm3 "NC2.5 count"
-        real nc4_0_pcm3 "NC4.0 count"
-        real nc10_pcm3 "NC10 count"
-        real typical_size_um "Typical particle size"
-        integer rssi_dbm "WiFi signal strength"
-        bigint uptime_s "Sensor uptime"
-        integer co2_age_s "CO2 reading age"
-        integer co2_resets "CO2 soft reset count"
+        text device_id "NOT NULL - Sensor identifier"
+        integer co2_ppm "CO2 concentration (ppm)"
+        real temp_c "Temperature (°C)"
+        real rh_pct "Relative humidity (%)"
+        real pressure_hpa "Barometric pressure (hPa)"
+        real pm2_5_ugm3 "PM2.5 mass (µg/m³)"
+        integer voc_index "VOC index 1–500"
+        integer rssi_dbm "WiFi RSSI (dBm)"
+    }
+
+    PURPLEAIR_READINGS {
+        timestamptz time PK "NOT NULL - Hypertable key"
+        integer sensor_index PK "UNIQUE with time"
+        text name "Sensor name"
+        real temp_c "Temperature °C (converted from °F)"
+        real humidity "Relative humidity (%)"
+        real pressure_hpa "Barometric pressure (hPa)"
+        real pm2_5_atm "PM2.5 atm correction (µg/m³)"
+        real pm2_5_atm_a "Channel A"
+        real pm2_5_atm_b "Channel B"
+        integer rssi_dbm "WiFi RSSI (dBm)"
     }
 ```
 
@@ -526,24 +554,32 @@ erDiagram
 
 ```mermaid
 flowchart LR
-    subgraph Table["iaq_readings (Hypertable)"]
-        DATA[Time-series data]
+    subgraph Tables["Hypertables"]
+        IAQ["iaq_readings"]
+        PA["purpleair_readings"]
     end
 
-    subgraph Index["Index: device_id, time DESC"]
-        IDX["B-tree index<br/>Optimized for:<br/>- Device filtering<br/>- Recent data queries<br/>- Time range scans"]
+    subgraph Indexes["Indexes"]
+        IDX1["idx_iaq_device_time<br/>(device_id, time DESC)"]
+        IDX2["idx_purpleair_sensor_time<br/>(sensor_index, time DESC)"]
+        UNIQ["UNIQUE (sensor_index, time)<br/>Enables ON CONFLICT DO NOTHING"]
     end
 
     subgraph Queries["Common Query Patterns"]
         Q1[Latest reading per device]
-        Q2[Time range for device]
+        Q2[Time range for sensor]
         Q3[Hourly aggregations]
+        Q4[Indoor vs outdoor join]
     end
 
-    DATA --> IDX
-    IDX --> Q1
-    IDX --> Q2
-    IDX --> Q3
+    IAQ --> IDX1
+    PA --> IDX2
+    PA --> UNIQ
+    IDX1 --> Q1
+    IDX2 --> Q2
+    IDX1 --> Q3
+    IDX2 --> Q4
+    IDX1 --> Q4
 ```
 
 ---
@@ -577,6 +613,15 @@ mindmap
             Uptime History
             Reading Interval
             Recent Readings Table
+        PurpleAir Outdoor
+            Outdoor PM2.5 with EPA AQI thresholds
+            PM1.0 and PM10
+            Dual-channel A vs B agreement
+            PM2.5 Outdoor vs Indoor overlay
+            Temperature Outdoor vs Indoor
+            Humidity Outdoor vs Indoor
+            Pressure Outdoor vs Indoor
+            RSSI and Uptime
 ```
 
 ### Dashboard Data Flow
@@ -590,6 +635,7 @@ flowchart TB
             D1[General Overview]
             D2[PM Deep Dive]
             D3[Data Quality]
+            D4[PurpleAir Outdoor]
         end
 
         subgraph Panels["Panel Types"]
@@ -602,14 +648,18 @@ flowchart TB
 
     subgraph DB["TimescaleDB"]
         HYPER[(iaq_readings)]
+        PAHYPER[(purpleair_readings)]
     end
 
     HYPER --> DS
+    PAHYPER --> DS
     DS --> D1 --> TS
     DS --> D1 --> STAT
     DS --> D2 --> TS
     DS --> D3 --> STAT
     DS --> D3 --> TABLE
+    DS --> D4 --> TS
+    DS --> D4 --> STAT
 ```
 
 ---
@@ -705,8 +755,9 @@ flowchart TB
 
 This IoT environmental monitoring system provides:
 
-- **Robust sensor integration** with automatic recovery mechanisms
+- **Dual data sources**: indoor Arduino/MQTT and outdoor PurpleAir HTTP API
+- **Robust sensor integration** with automatic recovery mechanisms (CO2 soft-reset, MQTT reconnect, idempotent HTTP history ingestion)
 - **Efficient data pipeline** from sensors to visualization
-- **Scalable architecture** using containerized services
+- **Scalable architecture** using 5 containerized services
 - **Cross-platform deployment** on Windows and Raspberry Pi
-- **Comprehensive monitoring** through Grafana dashboards
+- **Comprehensive monitoring** through four Grafana dashboards including indoor/outdoor comparisons
