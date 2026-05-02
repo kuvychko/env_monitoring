@@ -16,7 +16,7 @@ DB_CONFIG = {
     "port": int(os.getenv("PG_PORT", "5432")),
     "dbname": os.getenv("PG_DB", "iaq"),
     "user": os.getenv("PG_USER", "iaq"),
-    "password": os.getenv("PG_PASSWORD", "iaqpass"),
+    "password": os.getenv("PG_PASSWORD"),
 }
 
 # Connection pool (lazy initialized)
@@ -27,6 +27,8 @@ def get_pool() -> ConnectionPool:
     """Get or create the connection pool."""
     global _pool
     if _pool is None:
+        if not DB_CONFIG["password"]:
+            raise RuntimeError("PG_PASSWORD environment variable is required")
         conninfo = psycopg.conninfo.make_conninfo(**DB_CONFIG)
         _pool = ConnectionPool(conninfo, min_size=1, max_size=5, open=True)
         logger.info(f"Database pool created: {DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['dbname']}")

@@ -1,0 +1,3 @@
+user iaq
+topic readwrite iaq/+/telemetry
+topic readwrite iaq/+/status

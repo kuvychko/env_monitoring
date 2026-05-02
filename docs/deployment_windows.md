@@ -166,9 +166,9 @@ Update the firmware to point to your Windows machine:
 
 | Service | URL/Address | Credentials |
 |---------|-------------|-------------|
-| Grafana | http://localhost:3000 | admin / admin |
-| MQTT Broker | localhost:1883 | None (anonymous) |
-| TimescaleDB | localhost:5432 | iaq / iaqpass |
+| Grafana | http://localhost:3000 | admin / \<GRAFANA_ADMIN_PASSWORD from .env\> |
+| MQTT Broker | localhost:1883 | iaq / \<MQTT_PASSWORD from .env\> |
+| TimescaleDB | localhost:5432 | iaq / \<POSTGRES_PASSWORD from .env\> |
 
 ## Common Commands
 

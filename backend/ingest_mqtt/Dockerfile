@@ -12,5 +12,7 @@ COPY src/ src/
 # Install dependencies using uv
 RUN uv pip install --system --no-cache .
 
-# Run the service
+RUN groupadd -r appuser && useradd -r -g appuser appuser
+USER appuser
+
 CMD ["python", "-m", "ingest_mqtt.main"]
