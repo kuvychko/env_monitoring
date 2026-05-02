@@ -75,6 +75,30 @@ sequenceDiagram
 - `infra/mosquitto/mosquitto.conf` - Enables authentication
 - `infra/mosquitto/passwd` - Hashed password file
 
+### MQTT ACL Design Note
+
+The default ACL (`infra/mosquitto/acl`) uses a single shared `iaq` user with `readwrite` access to all device topics. This is fine for a single-sensor deployment but has a limitation: any device with the MQTT password can publish to any other device's topic.
+
+For multi-sensor deployments, consider per-device ACLs:
+
+```
+# Per-device write-only credentials (one entry per sensor)
+user esp32_bedroom
+topic write iaq/esp32_bedroom/telemetry
+topic write iaq/esp32_bedroom/status
+
+user esp32_office
+topic write iaq/esp32_office/telemetry
+topic write iaq/esp32_office/status
+
+# Ingest service: read-only access to all device topics
+user ingest
+topic read iaq/+/telemetry
+topic read iaq/+/status
+```
+
+This way a compromised device credential cannot spoof readings from other sensors, and the ingest service cannot publish.
+
 ### Grafana
 
 Grafana requires authentication to access dashboards:
