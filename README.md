@@ -35,28 +35,29 @@ A PurpleAir node (dual Plantower PMS3003) reports to the PurpleAir cloud at ~2-m
 
 ## System Architecture
 
-```
-┌─────────────────────────────────┐       ┌──────────────────────┐
-│        Arduino Nano ESP32       │       │   PurpleAir node     │
-│                                 │       │  (outdoor, cloud)    │
-│  PAS CO₂ ─┐                    │       └──────────┬───────────┘
-│  SPS30   ─┤─ I²C ─ firmware    │                  │ PurpleAir API
-│  BME280  ─┤         │           │                  │ (HTTPS, 120s)
-│  SGP40   ─┘         │           │                  │
-│                   TFT display   │    ┌─────────────▼──────────┐
-└─────────────┬───────────────────┘    │   ingest_purpleair     │
-              │ MQTT / Wi-Fi (1/min)   │   (Python)             │
-   ┌──────────▼───────────┐            └─────────────┬──────────┘
-   │      Mosquitto        │                          │
-   └──────────┬────────────┘           ┌─────────────▼──────────────────────┐
-              │                        │           TimescaleDB               │
-   ┌──────────▼───────────┐            │  iaq_readings | purpleair_readings  │
-   │    ingest_mqtt        ├───────────►                                     │
-   │    (Python)           │            └─────────────┬──────────────────────┘
-   └───────────────────────┘                          │
-                                           ┌──────────▼──────────┐
-                                           │       Grafana        │
-                                           └─────────────────────┘
+```mermaid
+flowchart TD
+    subgraph esp["Arduino Nano ESP32"]
+        sensors["PAS CO₂ · SPS30 · BME280 · SGP40\nI²C bus"]
+        fw["firmware"]
+        tft["TFT display"]
+        sensors --> fw
+        fw --> tft
+    end
+
+    pa["PurpleAir node\n(outdoor, cloud)"]
+    mosq["Mosquitto"]
+    im["ingest_mqtt\n(Python)"]
+    ip["ingest_purpleair\n(Python)"]
+    db[("TimescaleDB\niaq_readings · purpleair_readings")]
+    grafana["Grafana"]
+
+    esp -->|"MQTT / Wi-Fi · 1/min"| mosq
+    pa -->|"PurpleAir API\nHTTPS · 120 s"| ip
+    mosq --> im
+    im --> db
+    ip --> db
+    db --> grafana
 ```
 
 All backend services run in Docker on a Raspberry Pi. The database is not exposed outside the Docker network.

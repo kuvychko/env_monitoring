@@ -583,31 +583,23 @@ cat backup_20240101.sql | docker exec -i postgres psql -U iaq -d iaq
 
 ## Network Diagram
 
-```
-┌─────────────────┐     MQTT/1883      ┌─────────────────────────────────────┐
-│  Arduino Nano   │ ─────────────────→ │         Raspberry Pi                │
-│     ESP32       │      Wi-Fi         │  ┌─────────────────────────────┐   │
-└─────────────────┘                    │  │  Mosquitto (MQTT broker)   │   │
-                                       │  └──────────────┬──────────────┘   │
-                                       │                 │ subscribe        │
-                                       │                 ↓                  │
-                                       │  ┌─────────────────────────────┐   │
-                                       │  │  ingest_mqtt (Python)      │   │
-                                       │  └──────────────┬──────────────┘   │
-                                       │                 │ INSERT           │
-┌─────────────────┐     HTTPS          │                 ↓                  │
-│  PurpleAir API  │ ←─────────────────── ┌─────────────────────────────┐   │
-│  (cloud)        │ ─────────────────→ │  │  ingest_purpleair (Python) │   │
-└─────────────────┘    history poll    │  └──────────────┬──────────────┘   │
-                       every 120s      │                 │ INSERT           │
-                                       │                 ↓                  │
-                                       │  ┌─────────────────────────────┐   │
-                                       │  │  TimescaleDB (database)    │   │
-                                       │  └──────────────┬──────────────┘   │
-                                       │                 │ query            │
-                                       │                 ↓                  │
-                                       │  ┌─────────────────────────────┐   │
-                                       │  │  Grafana (dashboards)      │───┼──→ :3000
-                                       │  └─────────────────────────────┘   │
-                                       └─────────────────────────────────────┘
+```mermaid
+flowchart TD
+    esp["Arduino Nano ESP32"] -->|"MQTT/1883 · Wi-Fi"| mosq
+    paapi["PurpleAir API\n(cloud)"] <-->|"HTTPS · every 120 s"| ip
+
+    subgraph pi["Raspberry Pi"]
+        mosq["Mosquitto\n(MQTT broker)"]
+        im["ingest_mqtt\n(Python)"]
+        ip["ingest_purpleair\n(Python)"]
+        db[("TimescaleDB\n(database)")]
+        grafana["Grafana\n(dashboards)"]
+
+        mosq -->|subscribe| im
+        im -->|INSERT| db
+        ip -->|INSERT| db
+        db -->|query| grafana
+    end
+
+    grafana -->|":3000"| browser(["browser"])
 ```

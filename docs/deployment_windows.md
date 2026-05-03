@@ -283,23 +283,10 @@ docker compose up -d --build
 
 ## Network Diagram
 
-```
-┌─────────────────┐     MQTT/1883      ┌─────────────────┐
-│  Arduino Nano   │ ─────────────────→ │   Mosquitto     │
-│     ESP32       │      Wi-Fi         │   (broker)      │
-└─────────────────┘                    └────────┬────────┘
-                                                │
-                                                │ subscribe
-                                                ↓
-                                       ┌─────────────────┐
-                                       │  Ingest Service │
-                                       │    (Python)     │
-                                       └────────┬────────┘
-                                                │
-                                                │ INSERT
-                                                ↓
-┌─────────────────┐     SQL/5432       ┌─────────────────┐
-│     Grafana     │ ←───────────────── │   TimescaleDB   │
-│   (dashboards)  │      query         │   (database)    │
-└─────────────────┘                    └─────────────────┘
+```mermaid
+flowchart LR
+    esp["Arduino Nano ESP32"] -->|"MQTT/1883\nWi-Fi"| mosq["Mosquitto\n(broker)"]
+    mosq -->|subscribe| ingest["Ingest Service\n(Python)"]
+    ingest -->|INSERT| db[("TimescaleDB\n(database)")]
+    db -->|"SQL/5432"| grafana["Grafana\n(dashboards)"]
 ```
