@@ -10,7 +10,7 @@ This document describes the sensors used in the IAQ monitoring system, their spe
 | [BME280](#bosch-bme280-environmental) | Temperature, humidity, pressure | I2C | 0x77 | Bosch |
 | [PAS CO2](#infineon-xensiv-pas-co2) | Carbon dioxide concentration | I2C | 0x28 | Infineon |
 | [SGP40](#sensirion-sgp40-voc) | VOC index | I2C | 0x59 | Sensirion |
-| [ST7735 TFT](#st7735-tft-display) | Display | SPI | N/A | Various |
+| [ST7735S TFT](#st7735s-tft-display--jessinie-18) | Display | SPI | N/A | Sitronix / JESSINIE |
 
 ```mermaid
 flowchart LR
@@ -461,17 +461,23 @@ For reference, here are common air quality thresholds:
 
 ---
 
-## ST7735 TFT Display
+## ST7735S TFT Display — JESSINIE 1.8"
+
+Purchased: [JESSINIE 1.8" TFT LCD, 128×160, ST7735S, 3.3V SPI, 8-pin](https://www.amazon.com/dp/B0D31BGJWF) (ASIN B0D31BGJWF)
 
 ### Specifications
 
 | Parameter | Value |
 |-----------|-------|
 | Display size | 1.8 inch |
-| Resolution | 160 x 128 pixels |
+| Resolution | 160 × 128 pixels |
 | Color depth | 16-bit RGB565 |
-| Interface | SPI |
-| Backlight | LED |
+| Driver chip | ST7735S |
+| Supply voltage | **3.3V only** — 5V will damage it |
+| Current draw | ~30 mA |
+| Interface | SPI (4-wire, 8-pin, 2.54 mm pitch) |
+| Physical size | 35 × 56 × 3.45 mm |
+| Backlight | LED, always on (tied to 3.3V) |
 
 ### Wiring to Arduino Nano ESP32
 
@@ -506,9 +512,11 @@ For reference, here are common air quality thresholds:
 // Software SPI for reliability
 Adafruit_ST7735 tft = Adafruit_ST7735(TFT_CS, TFT_DC, TFT_MOSI, TFT_SCLK, TFT_RST);
 
-// Initialization
-tft.initR(INITR_GREENTAB);  // Use GREENTAB for this display
-tft.setRotation(1);         // Landscape: 160x128
+// Initialization — INITR_GREENTAB is required for the ST7735S variant.
+// ST7735 (BLACKTAB) and ST7735R (REDTAB) use different gamma/offset tables;
+// using the wrong one produces shifted colors or a blank display.
+tft.initR(INITR_GREENTAB);
+tft.setRotation(1);  // Landscape: 160×128
 ```
 
 ### Dashboard Display

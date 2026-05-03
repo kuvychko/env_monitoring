@@ -31,7 +31,7 @@ def main() -> None:
     api_key = os.environ.get("PURPLEAIR_API_KEY", "")
     sensor_index_str = os.environ.get("PURPLEAIR_SENSOR_INDEX", "")
     read_key = os.environ.get("PURPLEAIR_READ_KEY") or None
-    poll_interval = int(os.environ.get("PURPLEAIR_POLL_INTERVAL", "120"))
+    poll_interval = int(os.environ.get("PURPLEAIR_POLL_INTERVAL", "300"))
     # How far back to fetch on the very first run (empty table)
     lookback_hours = int(os.environ.get("PURPLEAIR_LOOKBACK_HOURS", "24"))
 

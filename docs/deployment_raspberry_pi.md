@@ -187,7 +187,7 @@ PURPLEAIR_READ_KEY=<your_per_sensor_read_key>
 - `PURPLEAIR_SENSOR_INDEX` — numeric sensor ID shown on the sensor detail page
 - `PURPLEAIR_READ_KEY` — per-sensor read key (required for private sensors; found on sensor detail page)
 
-The `ingest_purpleair` service polls the PurpleAir history endpoint every 120 seconds, checks the last stored timestamp in the DB, and fetches all readings since then. On first start it backfills up to `PURPLEAIR_LOOKBACK_HOURS` (default 24h) of history.
+The `ingest_purpleair` service polls the PurpleAir history endpoint every 300 seconds, checks the last stored timestamp in the DB, and fetches all readings since then. On first start it backfills up to `PURPLEAIR_LOOKBACK_HOURS` (default 24h) of history.
 
 ### 4.3 Start the services
 
@@ -586,7 +586,7 @@ cat backup_20240101.sql | docker exec -i postgres psql -U iaq -d iaq
 ```mermaid
 flowchart TD
     esp["Arduino Nano ESP32"] -->|"MQTT/1883 · Wi-Fi"| mosq
-    paapi["PurpleAir API\n(cloud)"] <-->|"HTTPS · every 120 s"| ip
+    paapi["PurpleAir API\n(cloud)"] <-->|"HTTPS · every 300 s"| ip
 
     subgraph pi["Raspberry Pi"]
         mosq["Mosquitto\n(MQTT broker)"]

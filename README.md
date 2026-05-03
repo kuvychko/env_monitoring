@@ -25,11 +25,11 @@ The enclosure is still very much TBD. The system is in the "works well enough th
 | BME280 | Bosch | Temperature (°C), humidity (%), pressure (hPa) |
 | SGP40 | Sensirion | VOC index (1–500) |
 
-All four sensors share a single I²C bus. The ESP32 also drives a 160×128 ST7735 TFT display over SPI as a live local dashboard.
+All four sensors share a single I²C bus. The ESP32 also drives a [JESSINIE 1.8" ST7735S](https://www.amazon.com/dp/B0D31BGJWF) (160×128, 3.3V) TFT display over SPI as a live local dashboard.
 
 ### Outdoor — PurpleAir
 
-A PurpleAir node (dual Plantower PMS3003) reports to the PurpleAir cloud at ~2-minute intervals. A backend service polls the PurpleAir history API every 120 seconds and stores the readings locally alongside the indoor data.
+A PurpleAir node (dual Plantower PMS3003) reports to the PurpleAir cloud at ~2-minute intervals. A backend service polls the PurpleAir history API every 300 seconds and stores the readings locally alongside the indoor data.
 
 ---
 
@@ -53,7 +53,7 @@ flowchart TD
     grafana["Grafana"]
 
     esp -->|"MQTT / Wi-Fi · 1/min"| mosq
-    pa -->|"PurpleAir API\nHTTPS · 120 s"| ip
+    pa -->|"PurpleAir API\nHTTPS · 300 s"| ip
     mosq --> im
     im --> db
     ip --> db
@@ -133,7 +133,7 @@ You can run without PurpleAir — just remove or comment out the `ingest_purplea
 
 **I²C addresses:** BME280 at `0x77`, SPS30 at `0x69`, PAS CO₂ at `0x28`, SGP40 at `0x59`. All four share one bus at 100 kHz.
 
-**TFT display:** ST7735 (160×128) on SPI. Shows a live summary with color-coded CO₂ and VOC thresholds. Uses a flicker-free update approach that redraws only changed values.
+**TFT display:** [JESSINIE 1.8" ST7735S](https://www.amazon.com/dp/B0D31BGJWF) (160×128, 3.3V only) on SPI. Initialized with `INITR_GREENTAB` — other init modes produce wrong colors on the ST7735**S** variant. Shows a live summary with color-coded CO₂ and VOC thresholds; flicker-free updates rewrite only changed values.
 
 **Firmware design:** Non-blocking polling with independent sensor intervals (SPS30 every 1s, BME280/SGP40 every 6s, CO₂ every 15s, publish every 60s). Ring-buffer averages smooth out noise. Stale readings map to `-1` in the payload, which the ingest service converts to `NULL` before inserting, so bad samples don't corrupt aggregates.
 

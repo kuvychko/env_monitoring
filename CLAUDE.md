@@ -13,7 +13,7 @@ IoT environmental monitoring system that collects **indoor** air quality (IAQ) d
 
 **Outdoor data flow:**
 1. PurpleAir sensor (sensor index <your-sensor-index>, "<your-sensor-name>") reports to PurpleAir cloud (~2 min intervals)
-2. `ingest_purpleair` Python service polls PurpleAir history API every 120s
+2. `ingest_purpleair` Python service polls PurpleAir history API every 300s
 3. New readings since last DB timestamp are batch-inserted into `purpleair_readings` table
 4. `ON CONFLICT DO NOTHING` on `(sensor_index, time)` handles overlaps and restarts safely
 
@@ -115,7 +115,7 @@ docker compose down
 - **API endpoint**: `GET https://api.purpleair.com/v1/sensors/{sensor_index}/history`
 - **Authentication**: `X-API-Key` header (account API key) + `read_key` query param (per-sensor key)
 - **Average parameter**: `0` = real-time, ~2-minute resolution (finest available)
-- **Polling**: every 120s; always fetches history since `MAX(time)` in DB
+- **Polling**: every 300s; always fetches history since `MAX(time)` in DB
 - **First run / gap recovery**: if DB is empty or stale, fetches last `PURPLEAIR_LOOKBACK_HOURS` (default 24h)
 - **Owner queries are free**: querying your own sensor with your own API key costs 0 points
 
@@ -172,5 +172,5 @@ PURPLEAIR_READ_KEY=...         # Per-sensor key (required for private sensors)
 ```
 
 Optional PurpleAir tuning (set in docker-compose.yml):
-- `PURPLEAIR_POLL_INTERVAL` — seconds between history fetches (default: 120)
+- `PURPLEAIR_POLL_INTERVAL` — seconds between history fetches (default: 300)
 - `PURPLEAIR_LOOKBACK_HOURS` — how far back to fetch on first run (default: 24)
