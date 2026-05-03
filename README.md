@@ -170,6 +170,12 @@ docs/                           # Architecture, schema, deployment, security
 
 ![PM2.5 soldering spike](docs/images/PM25_soldering_spike.png)
 
+**Humidifiers are surprisingly visible in PM data.** Running a humidifier in an adjacent room raises the NC0.5 baseline roughly 10×, from a typical 1–3 µg/m³ up to 20–30 µg/m³. The particles are water droplets, not pollution, but the optical sensor can't tell the difference.
+
+**Cooking reaches the sensor even from across the house.** Frying in a kitchen well away from the sensor pushes the PM2.5 background to 15–20 µg/m³. Boiling or baking produces a smaller but still visible rise. Both effects only stand out because the baseline is so low — in a city apartment with higher ambient PM, they'd likely be buried in the noise.
+
+**PurpleAir reads higher than calibrated instruments without correction.** The Plantower sensors inside PurpleAir report three PM2.5 values: CF=1 (factory/indoor calibration, reads highest), CF=ATM (outdoor-targeted, lower than CF=1 at high concentrations), and ALT (Lance Wallace's transparent optical-counting formula). All three read roughly 40% above EPA Federal Equivalent Method instruments on average. The EPA correction (Barkjohn et al. 2021) brings PurpleAir into much better agreement: `PM₂.₅ = 0.524 × CF1 − 0.0862 × RH + 5.75`, reducing RMSE from 8 to 3 µg/m³ and improving AQI category accuracy from 75% to 91%. Since both humidity and CF=1 are stored in `purpleair_readings`, this correction is applied directly in the Grafana SQL for the indoor/outdoor comparison.
+
 **Indoor and outdoor PM sensors don't agree by default.** PurpleAir uses dual Plantower PMS3003 sensors; the SPS30 is a more expensive, factory-calibrated unit with a different optical geometry and correction factors. Getting them onto the same scale is an interesting measurement problem in itself.
 
 **The value is in correlation.** CO₂ vs. occupancy, indoor PM2.5 vs. outdoor AQI, soldering events vs. recovery time, ventilation changes vs. CO₂ decay rate — none of this is visible until you have the data.

@@ -45,7 +45,7 @@
         {
           "datasource": { "type": "postgres", "uid": "timescaledb" },
           "editorMode": "code", "format": "time_series", "rawQuery": true,
-          "rawSql": "SELECT\n  time AS \"time\",\n  pm2_5_atm AS \"PM2.5 (atm)\",\n  pm2_5_cf1 AS \"PM2.5 (CF=1)\",\n  pm2_5_alt AS \"PM2.5 (alt)\"\nFROM purpleair_readings\nWHERE $__timeFilter(time)\nORDER BY time",
+          "rawSql": "SELECT\n  time AS \"time\",\n  pm2_5_atm AS \"PM2.5 (atm)\",\n  pm2_5_cf1 AS \"PM2.5 (CF=1)\",\n  pm2_5_alt AS \"PM2.5 (alt)\",\n  0.524 * pm2_5_cf1 - 0.0862 * humidity + 5.75 AS \"PM2.5 (EPA-corrected)\"\nFROM purpleair_readings\nWHERE $__timeFilter(time)\nORDER BY time",
           "refId": "A"
         }
       ],
@@ -170,7 +170,7 @@
         {
           "datasource": { "type": "postgres", "uid": "timescaledb" },
           "editorMode": "code", "format": "time_series", "rawQuery": true,
-          "rawSql": "SELECT\n  time AS \"time\",\n  pm2_5_atm AS \"Outdoor PM2.5 (PurpleAir)\"\nFROM purpleair_readings\nWHERE $__timeFilter(time)\nORDER BY time",
+          "rawSql": "SELECT\n  time AS \"time\",\n  0.524 * pm2_5_cf1 - 0.0862 * humidity + 5.75 AS \"Outdoor PM2.5 (EPA-corrected)\"\nFROM purpleair_readings\nWHERE $__timeFilter(time)\nORDER BY time",
           "refId": "A"
         },
         {
