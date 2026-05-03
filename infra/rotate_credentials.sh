@@ -130,7 +130,7 @@ success ".env updated."
 #    (docker compose up -d recreates containers when env changes)
 # ---------------------------------------------------------------------------
 info "Restarting services..."
-docker compose up -d ingest ingest_purpleair grafana
+docker compose up -d --build ingest ingest_purpleair grafana
 success "Services restarted."
 
 # ---------------------------------------------------------------------------
