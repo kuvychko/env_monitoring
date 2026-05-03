@@ -62,7 +62,7 @@ Only columns available from the `average=0` (real-time) history endpoint are inc
 |--------|------|-------------|
 | `time` | TIMESTAMPTZ | Reading timestamp (UTC) — from `last_seen`, hypertable key |
 | `sensor_index` | INTEGER | PurpleAir numeric sensor ID |
-| `name` | TEXT | Sensor name (e.g. "<your-sensor-name>") |
+| `name` | TEXT | Sensor name (e.g. "MyBackyard") |
 | `temp_c` | REAL | Temperature (°C) — converted from °F on ingest |
 | `humidity` | REAL | Relative humidity (%) |
 | `pressure_hpa` | REAL | Barometric pressure (hPa) |

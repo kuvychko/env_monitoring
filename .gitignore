@@ -1,4 +1,5 @@
 # Secrets (never commit credentials)
+.claude/
 firmware/*/secrets.h
 secrets.h
 infra/*/passwd
