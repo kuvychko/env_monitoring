@@ -79,9 +79,11 @@ Four dashboards are auto-provisioned at startup.
 
 ![Overview dashboard](docs/images/dashboard_overview.png)
 
-![PurpleAir outdoor dashboard](docs/images/dashboard_purpleair.png)
+![PM Deep Dive dashboard](docs/images/dashboard_pm_deep_dive.png)
 
-The PM spike visible in the PurpleAir outdoor view is a soldering session — the indoor SPS30 catches it within seconds.
+![Data Quality dashboard](docs/images/dashboard_data_quality.png)
+
+![PurpleAir outdoor dashboard](docs/images/dashboard_purpleair.png)
 
 ---
 
