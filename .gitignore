@@ -3,6 +3,7 @@
 firmware/*/secrets.h
 secrets.h
 infra/*/passwd
+infra/.env.bak.*
 
 # Arduino build artifacts
 firmware/**/build/
