@@ -179,15 +179,20 @@ flowchart TB
 All credentials are stored in `infra/.env` (gitignored):
 
 ```bash
-# PostgreSQL password
+# PostgreSQL / TimescaleDB
 POSTGRES_PASSWORD=<strong-random-password>
 
-# Grafana admin password
+# Grafana
 GRAFANA_ADMIN_PASSWORD=<strong-random-password>
 
-# MQTT credentials
+# MQTT broker
 MQTT_USER=iaq
 MQTT_PASSWORD=<strong-random-password>
+
+# PurpleAir (outdoor sensor) — get keys from develop.purpleair.com
+PURPLEAIR_API_KEY=<your-account-api-key>
+PURPLEAIR_SENSOR_INDEX=<your-sensor-index>
+PURPLEAIR_READ_KEY=<your-per-sensor-read-key>
 ```
 
 ### Generating Strong Passwords
@@ -204,9 +209,10 @@ python -c "import secrets; import string; print(''.join(secrets.choice(string.as
 
 | Credential | Used By |
 |------------|---------|
-| `POSTGRES_PASSWORD` | PostgreSQL, Ingest service, Grafana datasource |
+| `POSTGRES_PASSWORD` | PostgreSQL, ingest services, Grafana datasource |
 | `GRAFANA_ADMIN_PASSWORD` | Grafana web UI login |
-| `MQTT_USER` / `MQTT_PASSWORD` | Arduino firmware, Ingest service |
+| `MQTT_USER` / `MQTT_PASSWORD` | Arduino firmware, `ingest_mqtt` service |
+| `PURPLEAIR_API_KEY` / `PURPLEAIR_READ_KEY` / `PURPLEAIR_SENSOR_INDEX` | `ingest_purpleair` service |
 
 ## Setup Walkthrough
 
@@ -214,17 +220,17 @@ python -c "import secrets; import string; print(''.join(secrets.choice(string.as
 
 ```bash
 cd infra
+cp .env.example .env
 
-# Create .env file with strong passwords
-cat > .env << 'EOF'
-POSTGRES_PASSWORD=$(openssl rand -base64 24)
-GRAFANA_ADMIN_PASSWORD=$(openssl rand -base64 24)
-MQTT_USER=iaq
-MQTT_PASSWORD=$(openssl rand -base64 24)
-EOF
+# Generate one strong password per service — run this 3 times (4 with PurpleAir)
+openssl rand -base64 24
 
-# View generated passwords (save these!)
-cat .env
+# Open .env in your editor and paste each generated value into:
+#   POSTGRES_PASSWORD, GRAFANA_ADMIN_PASSWORD, MQTT_PASSWORD
+# (PurpleAir keys come from develop.purpleair.com, not openssl)
+$EDITOR .env
+
+# Save the final values in your password manager before closing.
 ```
 
 ### Step 2: Deploy the Stack
@@ -291,6 +297,7 @@ Use this checklist when deploying:
 
 - [ ] Generated strong, unique passwords in `infra/.env`
 - [ ] Verified `.env` is gitignored (not committed to repo)
+- [ ] PurpleAir keys configured in `.env` (only if using outdoor sensor)
 - [ ] Updated Arduino `secrets.h` with MQTT credentials
 - [ ] Flashed updated firmware to Arduino
 - [ ] Verified MQTT rejects anonymous connections

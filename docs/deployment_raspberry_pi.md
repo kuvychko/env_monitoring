@@ -158,24 +158,30 @@ services:
 
 ```bash
 sudo apt install git -y
-git clone https://github.com/YOUR_USERNAME/env_monitoring.git
+git clone https://github.com/kuvychko/env_monitoring.git
 cd env_monitoring
 ```
 
 ### 4.2 Configure credentials
 
-The stack uses environment variables for all credentials. A `.env` file with generated passwords has been created:
+The stack uses environment variables for all credentials. Copy the example and fill in real values:
 
 ```bash
 cd infra
-cat .env  # Review the generated passwords
+cp .env.example .env
+
+# Generate one strong password per service — run this 3 times
+openssl rand -base64 24
+
+# Edit .env and paste each value into POSTGRES_PASSWORD, GRAFANA_ADMIN_PASSWORD, MQTT_PASSWORD
+nano .env
 ```
 
-**Important**: Save these passwords somewhere secure. You'll need:
+**Important**: Save these passwords somewhere secure (a password manager). You'll need:
 - `GRAFANA_ADMIN_PASSWORD` for Grafana login
 - `MQTT_PASSWORD` for the Arduino firmware
 
-**PurpleAir credentials** must be added to `infra/.env`:
+**PurpleAir credentials** are also set in `infra/.env` (only required if you have a PurpleAir outdoor sensor):
 
 ```bash
 PURPLEAIR_API_KEY=<your_account_read_api_key>

@@ -11,13 +11,14 @@ Complete guide for deploying the Indoor Air Quality monitoring stack on Windows 
 
 ## Architecture Overview
 
-The stack consists of 4 services:
+The stack consists of 5 services:
 
 | Service | Port | Description |
 |---------|------|-------------|
-| Mosquitto | 1883 | MQTT broker for sensor data |
-| TimescaleDB | 5432 | PostgreSQL with time-series extensions |
-| Ingest | - | Python service: MQTT → Database |
+| Mosquitto | 1883 | MQTT broker for indoor sensor data |
+| TimescaleDB | 5432 | PostgreSQL with time-series extensions (internal only) |
+| ingest_mqtt | - | Python service: MQTT → Database (indoor) |
+| ingest_purpleair | - | Python service: PurpleAir HTTP API → Database (outdoor) |
 | Grafana | 3000 | Dashboards and visualization |
 
 ## Step 1: Install Docker Desktop
@@ -54,16 +55,35 @@ docker run hello-world
 ## Step 2: Clone the Repository
 
 ```powershell
-git clone https://github.com/YOUR_USERNAME/env_monitoring.git
+git clone https://github.com/kuvychko/env_monitoring.git
 cd env_monitoring
 ```
 
-## Step 3: Start the Services
-
-Navigate to the infrastructure directory and start all services:
+## Step 3: Configure Credentials
 
 ```powershell
 cd infra
+copy .env.example .env
+
+# Open .env in your editor — see comments inside for what each value should be.
+# Generate strong passwords with whichever tool you have available, e.g.:
+#   - Git Bash:   openssl rand -base64 24
+#   - PowerShell: -join ((48..57) + (65..90) + (97..122) | Get-Random -Count 24 | % {[char]$_})
+notepad .env
+```
+
+Save the generated passwords in your password manager — you'll need
+`MQTT_PASSWORD` again when you flash the firmware.
+
+**Optional — PurpleAir outdoor sensor:** if you have a PurpleAir node, also set
+`PURPLEAIR_API_KEY`, `PURPLEAIR_SENSOR_INDEX`, and `PURPLEAIR_READ_KEY` in
+`.env`. Get the keys from `develop.purpleair.com`. If you don't have a
+PurpleAir sensor, leave the variables blank or comment out the
+`ingest_purpleair` service in `docker-compose.yml`.
+
+## Step 4: Start the Services
+
+```powershell
 docker compose up -d
 ```
 
@@ -81,41 +101,45 @@ docker compose logs -f
 
 Press `Ctrl+C` to exit logs.
 
-## Step 4: Verify Deployment
+## Step 5: Verify Deployment
 
-### 4.1 Check Container Status
+### 5.1 Check Container Status
 
 ```powershell
 docker compose ps
 ```
 
-All 4 services should show `running`:
+All 5 services should show `running`:
 
 ```
-NAME        STATUS
-grafana     running
-ingest      running
-mosquitto   running
-postgres    running
+NAME              STATUS
+grafana           running
+ingest            running
+ingest_purpleair  running
+mosquitto         running
+postgres          running
 ```
 
-### 4.2 Test MQTT Broker
+### 5.2 Test MQTT Broker
+
+The broker requires authentication. Replace `<MQTT_PASSWORD>` below with the
+value from `infra/.env`.
 
 Open two terminals. In the first, subscribe to telemetry:
 
 ```powershell
-docker exec mosquitto mosquitto_sub -t "iaq/+/telemetry" -v
+docker exec mosquitto mosquitto_sub -h localhost -u iaq -P "<MQTT_PASSWORD>" -t "iaq/+/telemetry" -v
 ```
 
 In the second, publish a test message:
 
 ```powershell
-docker exec mosquitto mosquitto_pub -t "iaq/test/telemetry" -m "{\"device_id\":\"test\",\"co2_ppm\":450}"
+docker exec mosquitto mosquitto_pub -h localhost -u iaq -P "<MQTT_PASSWORD>" -t "iaq/test/telemetry" -m "{\"device_id\":\"test\",\"co2_ppm\":450}"
 ```
 
 You should see the message appear in the first terminal.
 
-### 4.3 Verify Database
+### 5.3 Verify Database
 
 Connect to the database and check the schema:
 
@@ -126,21 +150,21 @@ docker exec -it postgres psql -U iaq -d iaq -c "\dt"
 Expected output:
 
 ```
-              List of relations
- Schema |     Name     | Type  | Owner
---------+--------------+-------+-------
- public | iaq_readings | table | iaq
+                List of relations
+ Schema |        Name        | Type  | Owner
+--------+--------------------+-------+-------
+ public | iaq_readings       | table | iaq
+ public | purpleair_readings | table | iaq
 ```
 
-### 4.4 Access Grafana
+### 5.4 Access Grafana
 
 1. Open http://localhost:3000 in your browser
-2. Login with `admin` / `admin`
-3. Change password when prompted (or skip)
-4. Navigate to Dashboards → Browse
-5. You should see: General Overview, PM Deep Dive, Data Quality
+2. Login with `admin` and the value of `GRAFANA_ADMIN_PASSWORD` from `.env`
+3. Navigate to Dashboards → Browse
+4. You should see: Overview, PM Deep Dive, Data Quality, PurpleAir Outdoor
 
-## Step 5: Configure the Sensor
+## Step 6: Configure the Sensor
 
 Update the firmware to point to your Windows machine:
 
@@ -150,16 +174,27 @@ Update the firmware to point to your Windows machine:
    ```
    Look for "IPv4 Address" under your active network adapter (e.g., `192.168.1.50`)
 
-2. Edit `firmware/nano-esp32-iaq/secrets.h`:
-   ```cpp
-   #define MQTT_SERVER "192.168.1.50"
+2. Copy the secrets template and edit it:
+   ```powershell
+   copy firmware\nano-esp32-iaq\secrets.example.h firmware\nano-esp32-iaq\secrets.h
    ```
 
-3. Flash the firmware to your Arduino Nano ESP32
+3. Edit `firmware/nano-esp32-iaq/secrets.h` — fill in Wi-Fi credentials, set
+   `MQTT_HOST` to your machine's IP, and paste the `MQTT_PASSWORD` from `.env`:
+   ```cpp
+   #define WIFI_SSID "your_wifi_ssid"
+   #define WIFI_PASS "your_wifi_password"
+   #define MQTT_HOST "192.168.1.50"
+   #define MQTT_PORT 1883
+   #define MQTT_USER "iaq"
+   #define MQTT_PASS "<paste MQTT_PASSWORD from infra/.env>"
+   ```
 
-4. Watch for incoming data:
+4. Flash the firmware to your Arduino Nano ESP32
+
+5. Watch for incoming data (replace `<MQTT_PASSWORD>` with the value from `infra/.env`):
    ```powershell
-   docker exec mosquitto mosquitto_sub -t "iaq/+/telemetry" -v
+   docker exec mosquitto mosquitto_sub -h localhost -u iaq -P "<MQTT_PASSWORD>" -t "iaq/+/telemetry" -v
    ```
 
 ## Service Access
@@ -168,7 +203,7 @@ Update the firmware to point to your Windows machine:
 |---------|-------------|-------------|
 | Grafana | http://localhost:3000 | admin / \<GRAFANA_ADMIN_PASSWORD from .env\> |
 | MQTT Broker | localhost:1883 | iaq / \<MQTT_PASSWORD from .env\> |
-| TimescaleDB | localhost:5432 | iaq / \<POSTGRES_PASSWORD from .env\> |
+| TimescaleDB | Internal only | Not exposed externally |
 
 ## Common Commands
 
@@ -235,9 +270,9 @@ Either stop the conflicting service or change the port in `docker-compose.yml`.
 
 ### Sensor data not arriving
 
-1. Check MQTT connectivity:
+1. Check MQTT connectivity (replace `<MQTT_PASSWORD>` with the value from `infra/.env`):
    ```powershell
-   docker exec mosquitto mosquitto_sub -t "#" -v
+   docker exec mosquitto mosquitto_sub -h localhost -u iaq -P "<MQTT_PASSWORD>" -t "#" -v
    ```
 
 2. Verify firewall allows port 1883:
