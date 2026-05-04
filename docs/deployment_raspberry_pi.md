@@ -257,7 +257,7 @@ http://192.168.1.100:3000
 
 (Replace with your Pi's IP address)
 
-Login: `admin` / `admin`
+Login: `admin` / the value of `GRAFANA_ADMIN_PASSWORD` from `infra/.env`
 
 ## Step 6: Configure Firewall (Optional)
 
@@ -287,12 +287,20 @@ Update the firmware to point to your Raspberry Pi:
    cat infra/.env | grep MQTT_PASSWORD
    ```
 
-3. Edit `firmware/nano-esp32-iaq/secrets.h`:
+3. Copy the secrets template (one-time) and edit it:
+   ```bash
+   cp firmware/nano-esp32-iaq/secrets.example.h firmware/nano-esp32-iaq/secrets.h
+   ```
+
+   Fill in Wi-Fi credentials, set `MQTT_HOST` to your Pi's IP, and paste the
+   `MQTT_PASSWORD` from `.env`:
    ```cpp
+   #define WIFI_SSID "your_wifi_ssid"
+   #define WIFI_PASS "your_wifi_password"
    #define MQTT_HOST "192.168.1.100"
    #define MQTT_PORT 1883
    #define MQTT_USER "iaq"
-   #define MQTT_PASS "your_mqtt_password_from_env"
+   #define MQTT_PASS "<paste MQTT_PASSWORD from infra/.env>"
    ```
 
 4. Flash the firmware to your Arduino Nano ESP32
