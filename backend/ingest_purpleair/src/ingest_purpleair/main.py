@@ -31,7 +31,10 @@ def main() -> None:
     api_key = os.environ.get("PURPLEAIR_API_KEY", "")
     sensor_index_str = os.environ.get("PURPLEAIR_SENSOR_INDEX", "")
     read_key = os.environ.get("PURPLEAIR_READ_KEY") or None
-    poll_interval = int(os.environ.get("PURPLEAIR_POLL_INTERVAL", "300"))
+    poll_interval = int(os.environ.get("PURPLEAIR_POLL_INTERVAL", "600"))
+    # Resampling interval in minutes (0=real-time, 10=10-min, 60=hourly).
+    # Larger values cost fewer points; outdoor air rarely needs sub-10-min fidelity.
+    average = int(os.environ.get("PURPLEAIR_AVERAGE", "10"))
     # How far back to fetch on the very first run (empty table)
     lookback_hours = int(os.environ.get("PURPLEAIR_LOOKBACK_HOURS", "24"))
 
@@ -52,7 +55,8 @@ def main() -> None:
     sensor_name = meta.get("name") if meta else None
     logger.info(
         f"Starting PurpleAir ingestion for sensor {sensor_index} "
-        f"({sensor_name or 'unknown'}) — poll every {poll_interval}s"
+        f"({sensor_name or 'unknown'}) — poll every {poll_interval}s, "
+        f"average={average}min"
     )
 
     while _running:
@@ -73,7 +77,9 @@ def main() -> None:
             )
 
         start_unix = int(start_dt.timestamp())
-        rows = api.fetch_history(sensor_index, api_key, start_unix, read_key)
+        rows = api.fetch_history(
+            sensor_index, api_key, start_unix, read_key, average=average
+        )
 
         if rows is not None:
             inserted = db.insert_readings(rows, sensor_index, sensor_name)

@@ -19,53 +19,6 @@
             "pointSize": 5, "scaleDistribution": { "type": "linear" },
             "showPoints": "never", "spanNulls": false,
             "stacking": { "group": "A", "mode": "none" },
-            "thresholdsStyle": { "mode": "line" }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 12 },
-              { "color": "orange", "value": 35.4 },
-              { "color": "red", "value": 55.4 }
-            ]
-          },
-          "unit": "µg/m³"
-        },
-        "overrides": []
-      },
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 0 },
-      "id": 1,
-      "options": {
-        "legend": { "calcs": ["mean", "lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true },
-        "tooltip": { "mode": "multi", "sort": "none" }
-      },
-      "targets": [
-        {
-          "datasource": { "type": "postgres", "uid": "timescaledb" },
-          "editorMode": "code", "format": "time_series", "rawQuery": true,
-          "rawSql": "SELECT\n  time AS \"time\",\n  pm2_5_atm AS \"PM2.5 (atm)\",\n  pm2_5_cf1 AS \"PM2.5 (CF=1)\",\n  pm2_5_alt AS \"PM2.5 (alt)\",\n  0.524 * pm2_5_cf1 - 0.0862 * humidity + 5.75 AS \"PM2.5 (EPA-corrected)\"\nFROM purpleair_readings\nWHERE $__timeFilter(time)\nORDER BY time",
-          "refId": "A"
-        }
-      ],
-      "title": "Outdoor PM2.5 (µg/m³) — EPA AQI thresholds: Good <12 · Moderate <35.4 · USG <55.4 · Unhealthy >55.4",
-      "type": "timeseries"
-    },
-    {
-      "datasource": { "type": "postgres", "uid": "timescaledb" },
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "palette-classic" },
-          "custom": {
-            "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text",
-            "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line",
-            "fillOpacity": 10, "gradientMode": "none",
-            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
-            "insertNulls": false, "lineInterpolation": "smooth", "lineWidth": 2,
-            "pointSize": 5, "scaleDistribution": { "type": "linear" },
-            "showPoints": "never", "spanNulls": false,
-            "stacking": { "group": "A", "mode": "none" },
             "thresholdsStyle": { "mode": "off" }
           },
           "mappings": [],
@@ -74,7 +27,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
       "id": 2,
       "options": {
         "legend": { "calcs": ["mean", "lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true },
@@ -113,7 +66,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
       "id": 3,
       "options": {
         "legend": { "calcs": ["mean", "lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true },
@@ -160,7 +113,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 8 },
       "id": 4,
       "options": {
         "legend": { "calcs": ["mean", "lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true },
@@ -205,7 +158,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 24 },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 16 },
       "id": 5,
       "options": {
         "legend": { "calcs": ["mean", "lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true },
@@ -250,7 +203,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 24 },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 16 },
       "id": 6,
       "options": {
         "legend": { "calcs": ["mean", "lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true },
@@ -295,7 +248,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 24 },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 16 },
       "id": 7,
       "options": {
         "legend": { "calcs": ["mean", "lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true },
@@ -337,7 +290,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 12, "x": 0, "y": 32 },
+      "gridPos": { "h": 4, "w": 12, "x": 0, "y": 24 },
       "id": 8,
       "options": {
         "colorMode": "value", "graphMode": "area", "justifyMode": "auto",
@@ -373,7 +326,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 12, "x": 12, "y": 32 },
+      "gridPos": { "h": 4, "w": 12, "x": 12, "y": 24 },
       "id": 9,
       "options": {
         "colorMode": "value", "graphMode": "area", "justifyMode": "auto",

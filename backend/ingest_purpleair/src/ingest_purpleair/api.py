@@ -8,21 +8,22 @@ logger = logging.getLogger(__name__)
 
 BASE_URL = "https://api.purpleair.com/v1"
 
-# Fields requested from the history endpoint (average=0, real-time ~2-min data).
-# The history endpoint uses a columnar response: {"fields": [...], "data": [[...], ...]}.
+# Fields requested from the history endpoint. The response is columnar:
+# {"fields": [...], "data": [[...], ...]}.
+#
+# Field cost rule (PurpleAir API pricing): averaged fields = 2 pt/row,
+# channel-specific (*_a/_b) = 1 pt/row. We request only what dashboards display:
+#   - temperature/humidity/pressure: outdoor environmental panels
+#   - pm1.0_atm, pm10.0_atm: PM1/PM10 panel (averaged only — channels not displayed)
+#   - pm2.5_cf_1: required for the EPA correction formula in Grafana
+#       (0.524*cf_1 - 0.0862*humidity + 5.75)
+#   - pm2.5_atm_a/_b: A/B agreement panel (sensor-health diagnostic)
+#   - rssi, uptime: device-health stats
 _HISTORY_FIELDS = ",".join([
-    "temperature", "humidity", "pressure", "voc",
-    # PM1.0 (µg/m³)
-    "pm1.0_atm", "pm1.0_atm_a", "pm1.0_atm_b",
-    "pm1.0_cf_1", "pm1.0_cf_1_a", "pm1.0_cf_1_b",
-    # PM2.5 (µg/m³)
-    "pm2.5_atm", "pm2.5_atm_a", "pm2.5_atm_b",
-    "pm2.5_cf_1", "pm2.5_cf_1_a", "pm2.5_cf_1_b",
-    "pm2.5_alt", "pm2.5_alt_a", "pm2.5_alt_b",
-    # PM10 (µg/m³)
-    "pm10.0_atm", "pm10.0_atm_a", "pm10.0_atm_b",
-    "pm10.0_cf_1", "pm10.0_cf_1_a", "pm10.0_cf_1_b",
-    # Device health (particle counts and confidence not available at average=0)
+    "temperature", "humidity", "pressure",
+    "pm1.0_atm", "pm10.0_atm",
+    "pm2.5_cf_1",
+    "pm2.5_atm_a", "pm2.5_atm_b",
     "rssi", "uptime",
 ])
 
@@ -59,18 +60,20 @@ def fetch_history(
     api_key: str,
     start_timestamp: int,
     read_key: str | None = None,
+    average: int = 10,
 ) -> list[dict] | None:
     """
     Fetch historical readings since start_timestamp (Unix seconds).
 
-    Uses average=0 (real-time, ~2-minute resolution — the finest PurpleAir stores).
+    `average` selects the resampling interval in minutes. 0 = real-time (~2-min
+    cadence, finest available); 10 = 10-minute averages; 60 = hourly. Larger
+    values dramatically reduce point cost since rows-returned drops linearly.
     Returns a list of row dicts keyed by field name, or None on error.
-    The response is columnar; this function converts it to a list of dicts.
     """
     url = f"{BASE_URL}/sensors/{sensor_index}/history"
     params: dict = {
         "fields": _HISTORY_FIELDS,
-        "average": 0,
+        "average": average,
         "start_timestamp": start_timestamp,
     }
     if read_key:

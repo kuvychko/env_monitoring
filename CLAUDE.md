@@ -13,7 +13,7 @@ IoT environmental monitoring system that collects **indoor** air quality (IAQ) d
 
 **Outdoor data flow:**
 1. PurpleAir sensor (sensor index <your-sensor-index>, "<your-sensor-name>") reports to PurpleAir cloud (~2 min intervals)
-2. `ingest_purpleair` Python service polls PurpleAir history API every 300s
+2. `ingest_purpleair` Python service polls PurpleAir history API every 600s with `average=10` (10-min averages)
 3. New readings since last DB timestamp are batch-inserted into `purpleair_readings` table
 4. `ON CONFLICT DO NOTHING` on `(sensor_index, time)` handles overlaps and restarts safely
 
@@ -114,20 +114,19 @@ docker compose down
 - **Sensor**: index <your-sensor-index>, name "<your-sensor-name>", private (requires read key)
 - **API endpoint**: `GET https://api.purpleair.com/v1/sensors/{sensor_index}/history`
 - **Authentication**: `X-API-Key` header (account API key) + `read_key` query param (per-sensor key)
-- **Average parameter**: `0` = real-time, ~2-minute resolution (finest available)
-- **Polling**: every 300s; always fetches history since `MAX(time)` in DB
+- **Average parameter**: `10` = 10-minute averages (default; tunable via `PURPLEAIR_AVERAGE`)
+- **Polling**: every 600s; always fetches history since `MAX(time)` in DB
 - **First run / gap recovery**: if DB is empty or stale, fetches last `PURPLEAIR_LOOKBACK_HOURS` (default 24h)
-- **Owner queries are free**: querying your own sensor with your own API key costs 0 points
+- **API points are billed for owner queries too** — every call counts against your purchased point balance, even when polling your own sensor with your own keys. The implementation is tuned to minimize draw (~78k pt/month). See README §"PurpleAir API Costs".
 
-**Fields available at `average=0`** (real-time history):
-- Environmental: `temp_c` (converted from °F), `humidity`, `pressure_hpa`, `voc`
-- PM1.0/PM2.5/PM10: `atm`, `cf_1`, and `alt` corrections × channels A, B, and average
-- Device: `rssi_dbm`, `uptime_s`
+**Fields actually requested** (10 fields, ~16 pt/row at standard pricing):
+- Environmental (averaged): `temperature`, `humidity`, `pressure`
+- PM (averaged): `pm1.0_atm`, `pm10.0_atm`, `pm2.5_cf_1` (cf_1 is required for the EPA correction in Grafana)
+- PM channels: `pm2.5_atm_a`, `pm2.5_atm_b` (for the A/B agreement panel)
+- Device: `rssi`, `uptime`
 
-**Fields NOT available at `average=0`** (omitted from schema):
-- Moving averages (`pm2.5_10minute` etc.) — only at higher averaging intervals
-- Per-bin particle counts (`0.3_um_count_a` etc.) — not in real-time history
-- `confidence`, `channel_flags`, `channel_state` — not in real-time history
+**Fields populated in DB but unused / always NULL** (kept in the schema for backwards compat — see `db.py`):
+- `voc`; PM1/PM10 channels and CF=1 variants; PM2.5 CF=1 channels and ALT (averaged + channels); `pm2_5_atm` (the multi-algorithm comparison panel that read it was removed).
 
 ## Database
 
@@ -172,5 +171,6 @@ PURPLEAIR_READ_KEY=...         # Per-sensor key (required for private sensors)
 ```
 
 Optional PurpleAir tuning (set in docker-compose.yml):
-- `PURPLEAIR_POLL_INTERVAL` — seconds between history fetches (default: 300)
+- `PURPLEAIR_POLL_INTERVAL` — seconds between history fetches (default: 600)
+- `PURPLEAIR_AVERAGE` — minutes of averaging at the API (0=real-time ~2min, 10=10min, 60=hourly; default: 10). Larger values reduce point cost since rows-returned drops linearly.
 - `PURPLEAIR_LOOKBACK_HOURS` — how far back to fetch on first run (default: 24)

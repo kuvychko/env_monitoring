@@ -29,7 +29,7 @@ All four sensors share a single I²C bus. The ESP32 also drives a [JESSINIE 1.8"
 
 ### Outdoor — PurpleAir
 
-A PurpleAir node (dual Plantower PMS3003) reports to the PurpleAir cloud at ~2-minute intervals. A backend service polls the PurpleAir history API every 300 seconds and stores the readings locally alongside the indoor data.
+A PurpleAir node (dual Plantower PMS3003) reports to the PurpleAir cloud at ~2-minute intervals. A backend service polls the PurpleAir history API every 10 minutes (10-minute averages) and stores the readings locally alongside the indoor data. See [PurpleAir API Costs](#purpleair-api-costs) below for why polling is tuned conservatively.
 
 ---
 
@@ -138,6 +138,36 @@ You can run without PurpleAir — just remove or comment out the `ingest_purplea
 **TFT display:** [JESSINIE 1.8" ST7735S](https://www.amazon.com/dp/B0D31BGJWF) (160×128, 3.3V only) on SPI. Initialized with `INITR_GREENTAB` — other init modes produce wrong colors on the ST7735**S** variant. Shows a live summary with color-coded CO₂ and VOC thresholds; flicker-free updates rewrite only changed values.
 
 **Firmware design:** Non-blocking polling with independent sensor intervals (SPS30 every 1s, BME280/SGP40 every 6s, CO₂ every 15s, publish every 60s). Ring-buffer averages smooth out noise. Stale readings map to `-1` in the payload, which the ingest service converts to `NULL` before inserting, so bad samples don't corrupt aggregates.
+
+---
+
+## PurpleAir API Costs
+
+The outdoor side of this project depends on the PurpleAir API, which is a points-metered service. Worth understanding before you wire up your own sensor.
+
+**Cost model.** Every call to the history endpoint costs `base (2 pt) + sum(field_costs) × rows_returned`. Averaged fields cost 2 pt/row, per-channel fields (`*_a`, `*_b`) cost 1 pt/row. Points are purchased on [develop.purpleair.com](https://develop.purpleair.com); the rate is roughly 100 k–1 M points per dollar depending on package size.
+
+**Owner queries are not free.** A common (and intuitive) assumption is that querying your own sensor with your own API key shouldn't cost anything. It does. The history endpoint has no transparent owner-recognition — every call is billed against your point balance the same way as querying any public sensor.
+
+**PurpleAir support is excellent.** They've been generous about granting free starter points to hobbyist and non-commercial users. If you're building something like this for personal use, it's worth emailing them with a brief description before purchasing — that's how this project got off the ground without a dent in the wallet.
+
+**Why this implementation looks the way it does.** Because every call costs, `ingest_purpleair` is tuned for minimum draw at acceptable fidelity:
+
+- **`average=10`** (10-minute server-side averaging) instead of real-time. Outdoor air rarely changes on minute timescales the way indoor air does, and dropping from `average=0` to `average=10` reduces rows-per-day ~5×. PurpleAir's own efficiency guide notes a 30× reduction going from real-time to hourly.
+- **600-second poll interval**, matched to the averaging window. Polling more often than the data updates spends base cost without buying anything.
+- **10 fields requested**, not 27. Anything not actually plotted in Grafana isn't fetched. Where channels (`_a`/`_b`) are already needed for sensor-health diagnostics, the pre-averaged sibling field is dropped (PurpleAir's guide explicitly recommends averaging A/B locally over paying for the pre-averaged value).
+
+Steady-state draw under these settings: **~2.6 k pt/day, ~78 k pt/month** — about 12 months per million purchased points.
+
+**Tunables** (all in `infra/docker-compose.yml`):
+
+| Variable | Default | Effect |
+|---|---|---|
+| `PURPLEAIR_AVERAGE` | `10` | Server-side averaging in minutes (0=real-time ~2min, 10, 30, 60, 360, 1440, 10080). Higher values cost less per day at the cost of resolution. |
+| `PURPLEAIR_POLL_INTERVAL` | `600` | Seconds between fetches. There's no benefit to polling faster than `PURPLEAIR_AVERAGE × 60`. |
+| `PURPLEAIR_LOOKBACK_HOURS` | `24` | First-run / gap-recovery backfill window. |
+
+If you want sub-10-minute fidelity, set `PURPLEAIR_AVERAGE=0` and `PURPLEAIR_POLL_INTERVAL=300`. Expect ~16 k pt/day in that mode.
 
 ---
 

@@ -103,6 +103,9 @@ def map_history_row(row: dict, sensor_index: int, name: str | None = None) -> di
     temp_f = _f(row, "temperature")
     temp_c = (temp_f - 32) * 5 / 9 if temp_f is not None else None
 
+    # Only fields actually read by the dashboards are populated. The remaining
+    # columns stay NULL — the schema is unchanged for backwards compatibility,
+    # but we don't request these fields from the API anymore (see api.py).
     return {
         "time": time,
         "sensor_index": sensor_index,
@@ -110,31 +113,31 @@ def map_history_row(row: dict, sensor_index: int, name: str | None = None) -> di
         "temp_c": temp_c,
         "humidity": _f(row, "humidity"),
         "pressure_hpa": _f(row, "pressure"),
-        "voc": _f(row, "voc"),
+        "voc": None,
         # PM1.0
         "pm1_0_atm":   _f(row, "pm1.0_atm"),
-        "pm1_0_atm_a": _f(row, "pm1.0_atm_a"),
-        "pm1_0_atm_b": _f(row, "pm1.0_atm_b"),
-        "pm1_0_cf1":   _f(row, "pm1.0_cf_1"),
-        "pm1_0_cf1_a": _f(row, "pm1.0_cf_1_a"),
-        "pm1_0_cf1_b": _f(row, "pm1.0_cf_1_b"),
+        "pm1_0_atm_a": None,
+        "pm1_0_atm_b": None,
+        "pm1_0_cf1":   None,
+        "pm1_0_cf1_a": None,
+        "pm1_0_cf1_b": None,
         # PM2.5
-        "pm2_5_atm":   _f(row, "pm2.5_atm"),
+        "pm2_5_atm":   None,
         "pm2_5_atm_a": _f(row, "pm2.5_atm_a"),
         "pm2_5_atm_b": _f(row, "pm2.5_atm_b"),
         "pm2_5_cf1":   _f(row, "pm2.5_cf_1"),
-        "pm2_5_cf1_a": _f(row, "pm2.5_cf_1_a"),
-        "pm2_5_cf1_b": _f(row, "pm2.5_cf_1_b"),
-        "pm2_5_alt":   _f(row, "pm2.5_alt"),
-        "pm2_5_alt_a": _f(row, "pm2.5_alt_a"),
-        "pm2_5_alt_b": _f(row, "pm2.5_alt_b"),
+        "pm2_5_cf1_a": None,
+        "pm2_5_cf1_b": None,
+        "pm2_5_alt":   None,
+        "pm2_5_alt_a": None,
+        "pm2_5_alt_b": None,
         # PM10
         "pm10_0_atm":   _f(row, "pm10.0_atm"),
-        "pm10_0_atm_a": _f(row, "pm10.0_atm_a"),
-        "pm10_0_atm_b": _f(row, "pm10.0_atm_b"),
-        "pm10_0_cf1":   _f(row, "pm10.0_cf_1"),
-        "pm10_0_cf1_a": _f(row, "pm10.0_cf_1_a"),
-        "pm10_0_cf1_b": _f(row, "pm10.0_cf_1_b"),
+        "pm10_0_atm_a": None,
+        "pm10_0_atm_b": None,
+        "pm10_0_cf1":   None,
+        "pm10_0_cf1_a": None,
+        "pm10_0_cf1_b": None,
         # Device health
         "rssi_dbm": _i(row, "rssi"),
         "uptime_s": _i(row, "uptime"),
