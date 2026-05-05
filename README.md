@@ -145,7 +145,7 @@ You can run without PurpleAir — just remove or comment out the `ingest_purplea
 
 The outdoor side of this project depends on the PurpleAir API, which is a points-metered service. Worth understanding before you wire up your own sensor.
 
-**Cost model.** Every call to the history endpoint costs `base (2 pt) + sum(field_costs) × rows_returned`. Averaged fields cost 2 pt/row, per-channel fields (`*_a`, `*_b`) cost 1 pt/row. Points are purchased on [develop.purpleair.com](https://develop.purpleair.com); the rate is roughly 100 k–1 M points per dollar depending on package size.
+**Cost model.** Every call to the history endpoint costs `base (2 pt) + sum(field_costs) × rows_returned`. Averaged fields cost 2 pt/row, per-channel fields (`*_a`, `*_b`) cost 1 pt/row. Points are purchased on [develop.purpleair.com](https://develop.purpleair.com); the smallest tier ($10) buys 1,000,000 points (= 100k pts/$), and volume discounts kick in above that — up to 1M pts/$ at $5,000+ purchases.
 
 **Owner queries are not free.** A common (and intuitive) assumption is that querying your own sensor with your own API key shouldn't cost anything. It does. The history endpoint has no transparent owner-recognition — every call is billed against your point balance the same way as querying any public sensor.
 
