@@ -65,8 +65,12 @@ def main() -> None:
                 f"(since {start_dt.strftime('%Y-%m-%d %H:%M UTC')})"
             )
         else:
-            start_dt = last_ts
-            logger.debug(f"Fetching history since {start_dt.strftime('%Y-%m-%d %H:%M UTC')}")
+            start_dt = last_ts + timedelta(seconds=1)
+            window_s = (datetime.now(timezone.utc) - start_dt).total_seconds()
+            logger.info(
+                f"Fetching history since {start_dt.strftime('%Y-%m-%d %H:%M:%S UTC')} "
+                f"({window_s:.0f}s window)"
+            )
 
         start_unix = int(start_dt.timestamp())
         rows = api.fetch_history(sensor_index, api_key, start_unix, read_key)
