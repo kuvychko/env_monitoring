@@ -116,6 +116,7 @@ docker compose down
 - **Authentication**: `X-API-Key` header (account API key) + `read_key` query param (per-sensor key)
 - **Average parameter**: `10` = 10-minute averages (default; tunable via `PURPLEAIR_AVERAGE`)
 - **Polling**: every 600s; always fetches history since `MAX(time)` in DB
+- **Timestamp convention**: at insert time, averaged rows are re-stamped to the END of their averaging window (PurpleAir labels them with the START). This halves the apparent dashboard lag and matches the "as of" convention. The cursor logic in `main.py` accounts for this: when `average>0`, `start_dt = last_ts` directly (no `+ interval` skip needed, because `last_ts` already equals the next API window's start)
 - **First run / gap recovery**: if DB is empty or stale, fetches last `PURPLEAIR_LOOKBACK_HOURS` (default 24h)
 - **API points are billed for owner queries too** — every call counts against your purchased point balance, even when polling your own sensor with your own keys. The implementation is tuned to minimize draw (~78k pt/month). See README §"PurpleAir API Costs".
 

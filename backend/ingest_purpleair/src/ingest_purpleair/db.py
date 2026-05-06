@@ -92,11 +92,23 @@ ON CONFLICT (sensor_index, time) DO NOTHING
 """
 
 
-def map_history_row(row: dict, sensor_index: int, name: str | None = None) -> dict[str, Any]:
-    """Map one history API row dict to DB column values."""
+def map_history_row(
+    row: dict,
+    sensor_index: int,
+    name: str | None = None,
+    time_offset_s: int = 0,
+) -> dict[str, Any]:
+    """Map one history API row dict to DB column values.
+
+    PurpleAir labels each averaged row with the START of its averaging window.
+    For averaged data (average>0), pass `time_offset_s = average*60` to shift
+    the stored timestamp to the END of the window — this is the more natural
+    convention for "as of" dashboards and cuts apparent dashboard lag in half.
+    For real-time data (average=0), pass 0.
+    """
     ts = row.get("time_stamp")
     time = (
-        datetime.fromtimestamp(ts, tz=timezone.utc)
+        datetime.fromtimestamp(ts + time_offset_s, tz=timezone.utc)
         if ts
         else datetime.now(timezone.utc)
     )
@@ -158,16 +170,24 @@ def get_last_timestamp(sensor_index: int) -> datetime | None:
         return None
 
 
-def insert_readings(rows: list[dict], sensor_index: int, name: str | None = None) -> int:
+def insert_readings(
+    rows: list[dict],
+    sensor_index: int,
+    name: str | None = None,
+    time_offset_s: int = 0,
+) -> int:
     """
     Batch-insert history rows into the DB.
+
+    `time_offset_s` is forwarded to `map_history_row` to re-stamp averaged
+    data with its window-end timestamp.
 
     Skips duplicates via ON CONFLICT DO NOTHING.
     Returns the number of rows actually inserted.
     """
     if not rows:
         return 0
-    mapped = [map_history_row(r, sensor_index, name) for r in rows]
+    mapped = [map_history_row(r, sensor_index, name, time_offset_s) for r in rows]
     try:
         with get_connection() as conn:
             with conn.cursor() as cur:

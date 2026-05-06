@@ -69,11 +69,11 @@ def main() -> None:
                 f"(since {start_dt.strftime('%Y-%m-%d %H:%M UTC')})"
             )
         else:
-            # PurpleAir treats start_timestamp as "any window that contains this
-            # second", so for averaged data we must advance by a full interval
-            # to skip the row we just stored. For average=0, +1s suffices.
-            step_seconds = max(1, average * 60)
-            start_dt = last_ts + timedelta(seconds=step_seconds)
+            # Stored time is the END of the previous averaging window (re-
+            # stamped at insert), which equals the START of the next window
+            # in API time. So for average>0 we can fetch from last_ts directly.
+            # For average=0 (real-time), bump past the last actual measurement.
+            start_dt = last_ts + timedelta(seconds=1 if average == 0 else 0)
             window_s = (datetime.now(timezone.utc) - start_dt).total_seconds()
             logger.info(
                 f"Fetching history since {start_dt.strftime('%Y-%m-%d %H:%M:%S UTC')} "
@@ -86,7 +86,9 @@ def main() -> None:
         )
 
         if rows is not None:
-            inserted = db.insert_readings(rows, sensor_index, sensor_name)
+            inserted = db.insert_readings(
+                rows, sensor_index, sensor_name, time_offset_s=average * 60
+            )
             logger.info(
                 f"Fetched {len(rows)} rows from PurpleAir, inserted {inserted} new"
             )
