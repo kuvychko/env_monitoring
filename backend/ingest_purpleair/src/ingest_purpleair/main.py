@@ -69,7 +69,11 @@ def main() -> None:
                 f"(since {start_dt.strftime('%Y-%m-%d %H:%M UTC')})"
             )
         else:
-            start_dt = last_ts + timedelta(seconds=1)
+            # PurpleAir treats start_timestamp as "any window that contains this
+            # second", so for averaged data we must advance by a full interval
+            # to skip the row we just stored. For average=0, +1s suffices.
+            step_seconds = max(1, average * 60)
+            start_dt = last_ts + timedelta(seconds=step_seconds)
             window_s = (datetime.now(timezone.utc) - start_dt).total_seconds()
             logger.info(
                 f"Fetching history since {start_dt.strftime('%Y-%m-%d %H:%M:%S UTC')} "
