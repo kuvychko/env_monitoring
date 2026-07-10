@@ -40,14 +40,16 @@ ALTER DEFAULT PRIVILEGES FOR ROLE iaq_owner IN SCHEMA iaq
     GRANT USAGE, SELECT ON SEQUENCES TO iaq_rw;
 
 -- Unqualified table names resolve to the project schema for every role.
+-- `public` trails it so TimescaleDB's functions (time_bucket,
+-- create_hypertable, ...) stay reachable — the extension lives in public.
 -- Guarded: altering another role's settings needs CREATEROLE, which
 -- iaq_owner doesn't have. On re-runs as iaq_owner the settings already
 -- exist (from the first, privileged run), so skipping is harmless.
 DO $$
 BEGIN
-    EXECUTE 'ALTER ROLE iaq_owner SET search_path = iaq';
-    EXECUTE 'ALTER ROLE iaq_rw    SET search_path = iaq';
-    EXECUTE 'ALTER ROLE iaq_ro    SET search_path = iaq';
+    EXECUTE 'ALTER ROLE iaq_owner SET search_path = iaq, public';
+    EXECUTE 'ALTER ROLE iaq_rw    SET search_path = iaq, public';
+    EXECUTE 'ALTER ROLE iaq_ro    SET search_path = iaq, public';
 EXCEPTION WHEN insufficient_privilege THEN
     RAISE NOTICE 'skipping search_path settings (already set by a privileged run)';
 END $$;

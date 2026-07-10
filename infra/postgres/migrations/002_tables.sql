@@ -3,6 +3,8 @@
 -- public-schema init scripts 001-005). Idempotent; instance-agnostic.
 
 SET ROLE iaq_owner;
+-- Session search_path for this script: TimescaleDB's functions live in public.
+SET search_path = iaq, public;
 
 -- Indoor readings from the ESP32 sensor node (via MQTT)
 CREATE TABLE IF NOT EXISTS iaq.iaq_readings (
