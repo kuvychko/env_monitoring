@@ -21,7 +21,11 @@ WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'iaq_rw') \gexec
 SELECT format('CREATE ROLE iaq_ro LOGIN PASSWORD %L', :'iaq_ro_pw')
 WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'iaq_ro') \gexec
 
-CREATE SCHEMA IF NOT EXISTS iaq AUTHORIZATION iaq_owner;
+-- Guarded like the roles: CREATE SCHEMA IF NOT EXISTS checks database CREATE
+-- privilege even when the schema exists, which iaq_owner doesn't have on a
+-- shared cluster. Only emit the DDL when the schema is actually absent.
+SELECT 'CREATE SCHEMA iaq AUTHORIZATION iaq_owner'
+WHERE NOT EXISTS (SELECT FROM pg_namespace WHERE nspname = 'iaq') \gexec
 
 GRANT USAGE ON SCHEMA iaq TO iaq_rw, iaq_ro;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA iaq TO iaq_rw;
