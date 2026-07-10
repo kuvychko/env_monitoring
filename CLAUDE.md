@@ -49,12 +49,10 @@ infra/
   docker-compose.yml            # All 5 services
   .env                          # Credentials (gitignored)
   mosquitto/                    # Mosquitto config + passwd
-  postgres/init/                # SQL migrations (run in order on fresh DB)
-    001_schema.sql              # iaq_readings hypertable
-    002_add_co2_diagnostics.sql
-    003_add_voc.sql
-    004_add_purpleair.sql       # purpleair_readings hypertable
-    005_purpleair_drop_unavailable_cols.sql  # cleanup migration
+  postgres/migrations/          # Idempotent SQL migrations (lexical order)
+    001_roles_and_schema.sql    # iaq schema + iaq_owner/_rw/_ro roles
+    002_tables.sql              # iaq_readings + purpleair_readings hypertables
+  postgres/migrate.sh           # One-shot runner (migrate service, both modes)
   grafana/
     provisioning/               # Auto-provision datasource + dashboards
     dashboards/
@@ -138,17 +136,18 @@ Two TimescaleDB hypertables in the `iaq` database:
 | `iaq_readings` | MQTT (indoor) | `(device_id, time DESC)` | Indoor sensor readings |
 | `purpleair_readings` | PurpleAir API | `UNIQUE(sensor_index, time)`, index `(sensor_index, time DESC)` | Outdoor PurpleAir readings |
 
-**Applying migrations to an existing (running) database:**
+**Applying migrations (idempotent, both modes):**
 ```bash
-# From infra/ directory on the Pi
-docker exec -i postgres psql -U iaq -d iaq < postgres/init/004_add_purpleair.sql
-docker exec -i postgres psql -U iaq -d iaq < postgres/init/005_purpleair_drop_unavailable_cols.sql
+# From infra/ — also runs automatically as part of `docker compose up`
+docker compose run --rm migrate
 ```
 
-**Backup before schema changes:**
+**Backup before schema changes (standalone bundled DB):**
 ```bash
-docker exec postgres pg_dump -U iaq iaq > iaq_backup_$(date +%Y%m%d_%H%M%S).sql
+docker exec db pg_dump -U postgres -Fc warehouse > backup_$(date +%Y%m%d_%H%M%S).dump
 ```
+(Full-database dump on purpose: schema-scoped `pg_dump -n` misses hypertable
+chunk data.)
 
 ## Environment Configuration
 
@@ -156,7 +155,11 @@ All credentials live in `infra/.env` (gitignored). Required variables:
 
 ```bash
 # PostgreSQL / TimescaleDB
-POSTGRES_PASSWORD=...
+POSTGRES_SUPER_PW=...           # bundled-DB superuser (standalone); default migrate password
+IAQ_OWNER_PW=...                # role passwords, created by migration 001
+IAQ_RW_PW=...
+IAQ_RO_PW=...
+#PG_HOST=...                    # set only in shared mode (external cluster)
 
 # Grafana
 GRAFANA_ADMIN_PASSWORD=...

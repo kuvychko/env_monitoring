@@ -11,15 +11,21 @@ Complete guide for deploying the Indoor Air Quality monitoring stack on Raspberr
 
 ## Architecture Overview
 
-The stack consists of 5 services:
+The stack consists of 5 long-running services plus a one-shot migration job:
 
 | Service | Port | Description |
 |---------|------|-------------|
 | Mosquitto | 1883 | MQTT broker for indoor sensor data |
-| TimescaleDB | 5432 | PostgreSQL with time-series extensions |
+| TimescaleDB (`db`) | 5432 | PostgreSQL with time-series extensions (standalone profile) |
+| migrate | - | One-shot job: applies idempotent SQL migrations, then exits |
 | ingest_mqtt | - | Python service: MQTT → Database (indoor) |
 | ingest_purpleair | - | Python service: PurpleAir HTTP API → Database (outdoor) |
 | Grafana | 3000 | Dashboards and visualization |
+
+This guide covers **standalone mode** — the bundled database, fully
+self-contained. The same artifacts can instead attach to an external shared
+TimescaleDB cluster: set `PG_HOST` in `.env` and start without the
+`standalone` profile.
 
 All images have native ARM64 support.
 
@@ -144,7 +150,7 @@ If running on a 2GB Pi, add memory limits to `infra/docker-compose.yml`:
 
 ```yaml
 services:
-  postgres:
+  db:
     mem_limit: 512m
   grafana:
     mem_limit: 256m
@@ -170,10 +176,11 @@ The stack uses environment variables for all credentials. Copy the example and f
 cd infra
 cp .env.example .env
 
-# Generate one strong password per service — run this 3 times
+# Generate one strong password per credential — run this 6 times
 openssl rand -base64 24
 
-# Edit .env and paste each value into POSTGRES_PASSWORD, GRAFANA_ADMIN_PASSWORD, MQTT_PASSWORD
+# Edit .env and paste values into POSTGRES_SUPER_PW, IAQ_OWNER_PW, IAQ_RW_PW,
+# IAQ_RO_PW, GRAFANA_ADMIN_PASSWORD, MQTT_PASSWORD
 nano .env
 ```
 
@@ -198,13 +205,13 @@ The `ingest_purpleair` service polls the PurpleAir history endpoint every 300 se
 ### 4.3 Start the services
 
 ```bash
-docker compose up -d
+docker compose --profile standalone up -d --build
 ```
 
 First run will:
 - Pull ARM64 images (~500MB total)
-- Build the ingest service
-- Initialize the TimescaleDB database schema
+- Build the ingest services
+- Run the `migrate` job (creates the `iaq` schema, roles, and hypertables, then exits)
 - Provision Grafana dashboards
 
 This may take several minutes on first run. Monitor progress:
@@ -223,7 +230,8 @@ Press `Ctrl+C` to exit logs.
 docker compose ps
 ```
 
-All 5 services should show `running`.
+The 5 long-running services should show `running`; `migrate` shows
+`Exited (0)` — that's its job done.
 
 ### 5.2 Test MQTT broker
 
@@ -244,7 +252,7 @@ mosquitto_pub -h localhost -u iaq -P "$MQTT_PASSWORD" -t "iaq/test/telemetry" -m
 ### 5.3 Verify database
 
 ```bash
-docker exec -it postgres psql -U iaq -d iaq -c "\dt"
+docker exec -it db psql -U iaq_owner -d warehouse -c "\dt iaq.*"
 ```
 
 ### 5.4 Access Grafana
@@ -349,7 +357,7 @@ systemctl is-enabled containerd  # Should output: enabled
 ```bash
 sudo reboot
 # After reboot, SSH back in
-docker compose ps  # All 5 services should show "running"
+docker compose ps  # Long-running services show "running"; migrate shows Exited (0)
 ```
 
 ### If Containers Don't Auto-Start
@@ -389,13 +397,16 @@ docker compose down -v
 docker compose up -d --build
 
 # Check database row count
-docker exec postgres psql -U iaq -d iaq -c "SELECT COUNT(*) FROM iaq_readings"
+docker exec db psql -U iaq_owner -d warehouse -c "SELECT COUNT(*) FROM iaq_readings"
 
 # Recent indoor readings
-docker exec postgres psql -U iaq -d iaq -c "SELECT time, device_id, co2_ppm, temp_c FROM iaq_readings ORDER BY time DESC LIMIT 5"
+docker exec db psql -U iaq_owner -d warehouse -c "SELECT time, device_id, co2_ppm, temp_c FROM iaq_readings ORDER BY time DESC LIMIT 5"
 
 # Recent outdoor readings
-docker exec postgres psql -U iaq -d iaq -c "SELECT time, pm2_5_atm, temp_c, humidity FROM purpleair_readings ORDER BY time DESC LIMIT 5"
+docker exec db psql -U iaq_owner -d warehouse -c "SELECT time, pm2_5_atm, temp_c, humidity FROM purpleair_readings ORDER BY time DESC LIMIT 5"
+
+# Re-apply migrations (idempotent, safe anytime)
+docker compose run --rm migrate
 
 # PurpleAir ingest logs
 docker compose logs -f ingest_purpleair
@@ -497,13 +508,12 @@ docker compose up -d
 
 3. Verify outdoor data in DB:
    ```bash
-   docker exec postgres psql -U iaq -d iaq -c "SELECT COUNT(*), MAX(time) FROM purpleair_readings"
+   docker exec db psql -U iaq_owner -d warehouse -c "SELECT COUNT(*), MAX(time) FROM purpleair_readings"
    ```
 
-4. If the `purpleair_readings` table doesn't exist on an existing DB, apply the migration:
+4. If the `purpleair_readings` table doesn't exist, re-run the (idempotent) migrations:
    ```bash
-   docker exec -i postgres psql -U iaq -d iaq < infra/postgres/init/004_add_purpleair.sql
-   docker exec -i postgres psql -U iaq -d iaq < infra/postgres/init/005_purpleair_drop_unavailable_cols.sql
+   docker compose run --rm migrate
    ```
 
 ### Database disk space
@@ -511,7 +521,7 @@ docker compose up -d
 Check TimescaleDB size:
 
 ```bash
-docker exec postgres psql -U iaq -d iaq -c "SELECT pg_size_pretty(pg_database_size('iaq'))"
+docker exec db psql -U iaq_owner -d warehouse -c "SELECT pg_size_pretty(pg_database_size('warehouse'))"
 ```
 
 To reduce size, consider adding data retention policies with TimescaleDB.
@@ -520,8 +530,8 @@ To reduce size, consider adding data retention policies with TimescaleDB.
 
 ```bash
 cd ~/env_monitoring/infra
-docker compose down -v
-docker compose up -d
+docker compose --profile standalone down -v
+docker compose --profile standalone up -d --build
 ```
 
 ## Updating
@@ -532,8 +542,8 @@ Pull latest changes and rebuild:
 cd ~/env_monitoring
 git pull
 cd infra
-docker compose down
-docker compose up -d --build
+docker compose --profile standalone down
+docker compose --profile standalone up -d --build
 ```
 
 ## Remote Access with Tailscale
@@ -586,13 +596,19 @@ Then SSH with: `ssh user@<pi-tailscale-hostname>`
 ### Backup database
 
 ```bash
-docker exec postgres pg_dump -U iaq iaq > backup_$(date +%Y%m%d).sql
+# Full-database dump on purpose: a schema-scoped `pg_dump -n` silently
+# misses hypertable data (TimescaleDB stores it outside the schema).
+docker exec db pg_dump -U postgres -Fc warehouse > backup_$(date +%Y%m%d).dump
 ```
 
 ### Restore database
 
+Into a fresh instance (TimescaleDB needs its restore wrap):
+
 ```bash
-cat backup_20240101.sql | docker exec -i postgres psql -U iaq -d iaq
+docker exec db psql -U postgres -d warehouse -c "SELECT timescaledb_pre_restore();"
+cat backup_20240101.dump | docker exec -i db pg_restore -U postgres -d warehouse
+docker exec db psql -U postgres -d warehouse -c "SELECT timescaledb_post_restore();"
 ```
 
 ## Network Diagram

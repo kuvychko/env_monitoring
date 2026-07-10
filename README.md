@@ -114,8 +114,14 @@ Upload to the Arduino Nano ESP32.
 cd infra
 cp .env.example .env
 # Edit .env — see comments in the file for each variable
-docker compose up -d
+docker compose --profile standalone up -d --build
 ```
+
+This brings up the full self-contained stack, including a bundled TimescaleDB.
+(The `standalone` profile is the normal way to run this project. The same
+artifacts can instead attach to an external shared TimescaleDB cluster — set
+`PG_HOST` in `.env` and omit the profile; see
+[docs/deployment_raspberry_pi.md](docs/deployment_raspberry_pi.md).)
 
 Grafana is at `http://<pi-ip>:3000`. Credentials are whatever you set in `.env`.
 
@@ -185,7 +191,8 @@ infra/
   docker-compose.yml
   .env.example                  # Copy to .env and fill in
   mosquitto/                    # Broker config + hashed password file
-  postgres/init/                # SQL migrations (applied in order on fresh DB)
+  postgres/migrations/          # SQL migrations (idempotent, applied in order
+  postgres/migrate.sh           #   by the one-shot migrate container)
   grafana/
     provisioning/               # Auto-provision datasource
     dashboards/                 # 4 JSON dashboard definitions

@@ -180,7 +180,10 @@ All credentials are stored in `infra/.env` (gitignored):
 
 ```bash
 # PostgreSQL / TimescaleDB
-POSTGRES_PASSWORD=<strong-random-password>
+POSTGRES_SUPER_PW=<strong-random-password>   # bundled-DB superuser (standalone mode)
+IAQ_OWNER_PW=<strong-random-password>        # DDL / migrations role
+IAQ_RW_PW=<strong-random-password>           # ingest writer role
+IAQ_RO_PW=<strong-random-password>           # Grafana read-only role
 
 # Grafana
 GRAFANA_ADMIN_PASSWORD=<strong-random-password>
@@ -209,7 +212,10 @@ python -c "import secrets; import string; print(''.join(secrets.choice(string.as
 
 | Credential | Used By |
 |------------|---------|
-| `POSTGRES_PASSWORD` | PostgreSQL, ingest services, Grafana datasource |
+| `POSTGRES_SUPER_PW` | bundled PostgreSQL superuser; migration runner default |
+| `IAQ_OWNER_PW` | migration runner (DDL) |
+| `IAQ_RW_PW` | ingest services (write) |
+| `IAQ_RO_PW` | Grafana datasource (read-only) |
 | `GRAFANA_ADMIN_PASSWORD` | Grafana web UI login |
 | `MQTT_USER` / `MQTT_PASSWORD` | Arduino firmware, `ingest_mqtt` service |
 | `PURPLEAIR_API_KEY` / `PURPLEAIR_READ_KEY` / `PURPLEAIR_SENSOR_INDEX` | `ingest_purpleair` service |
@@ -222,11 +228,12 @@ python -c "import secrets; import string; print(''.join(secrets.choice(string.as
 cd infra
 cp .env.example .env
 
-# Generate one strong password per service — run this 3 times (4 with PurpleAir)
+# Generate one strong password per credential — run this 6 times
 openssl rand -base64 24
 
 # Open .env in your editor and paste each generated value into:
-#   POSTGRES_PASSWORD, GRAFANA_ADMIN_PASSWORD, MQTT_PASSWORD
+#   POSTGRES_SUPER_PW, IAQ_OWNER_PW, IAQ_RW_PW, IAQ_RO_PW,
+#   GRAFANA_ADMIN_PASSWORD, MQTT_PASSWORD
 # (PurpleAir keys come from develop.purpleair.com, not openssl)
 $EDITOR .env
 

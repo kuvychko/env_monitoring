@@ -11,15 +11,19 @@ Complete guide for deploying the Indoor Air Quality monitoring stack on Windows 
 
 ## Architecture Overview
 
-The stack consists of 5 services:
+The stack consists of 5 long-running services plus a one-shot migration job:
 
 | Service | Port | Description |
 |---------|------|-------------|
 | Mosquitto | 1883 | MQTT broker for indoor sensor data |
-| TimescaleDB | 5432 | PostgreSQL with time-series extensions (internal only) |
+| TimescaleDB (`db`) | 5432 | PostgreSQL with time-series extensions (internal only) |
+| migrate | - | One-shot job: applies idempotent SQL migrations, then exits |
 | ingest_mqtt | - | Python service: MQTT → Database (indoor) |
 | ingest_purpleair | - | Python service: PurpleAir HTTP API → Database (outdoor) |
 | Grafana | 3000 | Dashboards and visualization |
+
+This guide covers **standalone mode** — the bundled database, fully
+self-contained (the `--profile standalone` flag below).
 
 ## Step 1: Install Docker Desktop
 
@@ -84,13 +88,13 @@ PurpleAir sensor, leave the variables blank or comment out the
 ## Step 4: Start the Services
 
 ```powershell
-docker compose up -d
+docker compose --profile standalone up -d --build
 ```
 
 First run will:
 - Pull images (~500MB total)
-- Build the ingest service
-- Initialize the TimescaleDB database schema
+- Build the ingest services
+- Run the `migrate` job (creates the `iaq` schema, roles, and hypertables, then exits)
 - Provision Grafana dashboards
 
 Monitor startup progress:
@@ -109,15 +113,17 @@ Press `Ctrl+C` to exit logs.
 docker compose ps
 ```
 
-All 5 services should show `running`:
+The long-running services show `running`; `migrate` shows `Exited (0)` —
+that's its job done:
 
 ```
 NAME              STATUS
+db                running
 grafana           running
+infra-migrate-1   exited (0)
 ingest            running
 ingest_purpleair  running
 mosquitto         running
-postgres          running
 ```
 
 ### 5.2 Test MQTT Broker
@@ -144,17 +150,17 @@ You should see the message appear in the first terminal.
 Connect to the database and check the schema:
 
 ```powershell
-docker exec -it postgres psql -U iaq -d iaq -c "\dt"
+docker exec -it db psql -U iaq_owner -d warehouse -c "\dt iaq.*"
 ```
 
 Expected output:
 
 ```
                 List of relations
- Schema |        Name        | Type  | Owner
---------+--------------------+-------+-------
- public | iaq_readings       | table | iaq
- public | purpleair_readings | table | iaq
+ Schema |        Name        | Type  |   Owner
+--------+--------------------+-------+-----------
+ iaq    | iaq_readings       | table | iaq_owner
+ iaq    | purpleair_readings | table | iaq_owner
 ```
 
 ### 5.4 Access Grafana
@@ -227,10 +233,13 @@ docker compose down -v
 docker compose up -d --build
 
 # Check database row count
-docker exec postgres psql -U iaq -d iaq -c "SELECT COUNT(*) FROM iaq_readings"
+docker exec db psql -U iaq_owner -d warehouse -c "SELECT COUNT(*) FROM iaq_readings"
 
 # Recent readings
-docker exec postgres psql -U iaq -d iaq -c "SELECT time, device_id, co2_ppm, temp_c FROM iaq_readings ORDER BY time DESC LIMIT 5"
+docker exec db psql -U iaq_owner -d warehouse -c "SELECT time, device_id, co2_ppm, temp_c FROM iaq_readings ORDER BY time DESC LIMIT 5"
+
+# Re-apply migrations (idempotent, safe anytime)
+docker compose run --rm migrate
 ```
 
 ## Troubleshooting
@@ -258,7 +267,7 @@ Either stop the conflicting service or change the port in `docker-compose.yml`.
 
 1. Verify data is being ingested:
    ```powershell
-   docker exec postgres psql -U iaq -d iaq -c "SELECT COUNT(*) FROM iaq_readings"
+   docker exec db psql -U iaq_owner -d warehouse -c "SELECT COUNT(*) FROM iaq_readings"
    ```
 
 2. Check ingest service logs:
@@ -285,13 +294,13 @@ Either stop the conflicting service or change the port in `docker-compose.yml`.
 Check Postgres is healthy:
 
 ```powershell
-docker exec postgres pg_isready -U iaq
+docker exec db pg_isready -U postgres
 ```
 
 View Postgres logs:
 
 ```powershell
-docker compose logs postgres
+docker compose logs db
 ```
 
 ### Fresh reinstall
@@ -299,8 +308,8 @@ docker compose logs postgres
 To completely reset and start fresh:
 
 ```powershell
-docker compose down -v
-docker compose up -d
+docker compose --profile standalone down -v
+docker compose --profile standalone up -d --build
 ```
 
 This deletes all data and recreates the database schema.
@@ -312,8 +321,8 @@ Pull latest changes and rebuild:
 ```powershell
 git pull
 cd infra
-docker compose down
-docker compose up -d --build
+docker compose --profile standalone down
+docker compose --profile standalone up -d --build
 ```
 
 ## Network Diagram

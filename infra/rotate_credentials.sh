@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
-# rotate_credentials.sh — rotate service credentials before making the repo public.
+# rotate_credentials.sh — rotate service credentials.
 #
-# Rotates:  POSTGRES_PASSWORD, GRAFANA_ADMIN_PASSWORD, PURPLEAIR_API_KEY, PURPLEAIR_READ_KEY
+# Rotates:  POSTGRES_SUPER_PW, IAQ_OWNER_PW, IAQ_RW_PW, IAQ_RO_PW,
+#           GRAFANA_ADMIN_PASSWORD, PURPLEAIR_API_KEY, PURPLEAIR_READ_KEY
 # Skipped:  MQTT_PASSWORD (baked into ESP32 firmware via secrets.h)
 # Manual:   SSH password — see reminder at the end
+#
+# Standalone mode only (expects the bundled `db` container). In shared mode,
+# rotate the iaq_* role passwords on the cluster with ALTER ROLE, then update
+# this .env to match.
 #
 # Run from the infra/ directory:
 #   cd infra && bash rotate_credentials.sh
@@ -30,7 +35,7 @@ command -v openssl  >/dev/null 2>&1 || die "openssl not found."
 command -v python3  >/dev/null 2>&1 || die "python3 not found."
 command -v curl     >/dev/null 2>&1 || die "curl not found."
 
-for svc in postgres grafana; do
+for svc in db grafana; do
     state=$(docker inspect --format='{{.State.Status}}' "$svc" 2>/dev/null || true)
     [[ "$state" == "running" ]] || die "Container '$svc' is not running (state: ${state:-not found}). Start the stack first."
 done
@@ -40,20 +45,27 @@ info "Preflight checks passed."
 # ---------------------------------------------------------------------------
 # 2. Read current credentials from .env
 # ---------------------------------------------------------------------------
-OLD_PG_PASS=$(grep    '^POSTGRES_PASSWORD='        .env | cut -d= -f2-)
+OLD_SUPER_PW=$(grep   '^POSTGRES_SUPER_PW='        .env | cut -d= -f2-)
+OLD_OWNER_PW=$(grep   '^IAQ_OWNER_PW='             .env | cut -d= -f2-)
+OLD_RW_PW=$(grep      '^IAQ_RW_PW='                .env | cut -d= -f2-)
+OLD_RO_PW=$(grep      '^IAQ_RO_PW='                .env | cut -d= -f2-)
 OLD_GF_PASS=$(grep    '^GRAFANA_ADMIN_PASSWORD='   .env | cut -d= -f2-)
 OLD_PA_KEY=$(grep     '^PURPLEAIR_API_KEY='        .env | cut -d= -f2-)
 OLD_PA_READ=$(grep    '^PURPLEAIR_READ_KEY='       .env | cut -d= -f2-)
 
-[[ -n "$OLD_PG_PASS" ]] || die "POSTGRES_PASSWORD not found in .env"
+[[ -n "$OLD_SUPER_PW" ]] || die "POSTGRES_SUPER_PW not found in .env"
+[[ -n "$OLD_OWNER_PW" && -n "$OLD_RW_PW" && -n "$OLD_RO_PW" ]] || die "IAQ_*_PW not found in .env"
 [[ -n "$OLD_GF_PASS" ]] || die "GRAFANA_ADMIN_PASSWORD not found in .env"
 
 # ---------------------------------------------------------------------------
 # 3. Generate new passwords (hex = no special chars to escape)
 # ---------------------------------------------------------------------------
-NEW_PG_PASS=$(openssl rand -hex 24)
+NEW_SUPER_PW=$(openssl rand -hex 24)
+NEW_OWNER_PW=$(openssl rand -hex 24)
+NEW_RW_PW=$(openssl rand -hex 24)
+NEW_RO_PW=$(openssl rand -hex 24)
 NEW_GF_PASS=$(openssl rand -hex 24)
-info "Generated new passwords for Postgres and Grafana."
+info "Generated new passwords for Postgres roles and Grafana."
 
 # ---------------------------------------------------------------------------
 # 4. Prompt for PurpleAir keys (Enter = keep current)
@@ -76,10 +88,13 @@ success "Backed up .env → $BACKUP"
 # ---------------------------------------------------------------------------
 # 6. Rotate Postgres password (live — no service interruption)
 # ---------------------------------------------------------------------------
-info "Rotating Postgres password..."
-docker exec postgres psql -U iaq -d iaq \
-    -c "ALTER USER iaq WITH PASSWORD '$NEW_PG_PASS';" -q
-success "Postgres password updated."
+info "Rotating Postgres passwords..."
+docker exec db psql -U postgres -d warehouse -q \
+    -c "ALTER ROLE iaq_owner WITH PASSWORD '$NEW_OWNER_PW';" \
+    -c "ALTER ROLE iaq_rw    WITH PASSWORD '$NEW_RW_PW';" \
+    -c "ALTER ROLE iaq_ro    WITH PASSWORD '$NEW_RO_PW';" \
+    -c "ALTER ROLE postgres  WITH PASSWORD '$NEW_SUPER_PW';"
+success "Postgres passwords updated (superuser + iaq_owner/_rw/_ro)."
 
 # ---------------------------------------------------------------------------
 # 7. Rotate Grafana admin password via HTTP API (Grafana stays running)
@@ -90,9 +105,12 @@ GF_OUTPUT=$(docker exec grafana grafana-cli admin reset-admin-password "$NEW_GF_
 if echo "$GF_OUTPUT" | grep -q "Admin password changed successfully"; then
     success "Grafana password updated."
 else
-    warn "grafana-cli failed: $GF_OUTPUT. Rolling back Postgres password..."
-    docker exec postgres psql -U iaq -d iaq \
-        -c "ALTER USER iaq WITH PASSWORD '$OLD_PG_PASS';" -q
+    warn "grafana-cli failed: $GF_OUTPUT. Rolling back Postgres passwords..."
+    docker exec db psql -U postgres -d warehouse -q \
+        -c "ALTER ROLE iaq_owner WITH PASSWORD '$OLD_OWNER_PW';" \
+        -c "ALTER ROLE iaq_rw    WITH PASSWORD '$OLD_RW_PW';" \
+        -c "ALTER ROLE iaq_ro    WITH PASSWORD '$OLD_RO_PW';" \
+        -c "ALTER ROLE postgres  WITH PASSWORD '$OLD_SUPER_PW';"
     cp "$BACKUP" .env
     die "Grafana password rotation failed. .env and Postgres restored from backup."
 fi
@@ -115,7 +133,10 @@ def replace_var(text, key, value):
         flags=re.MULTILINE
     )
 
-content = replace_var(content, 'POSTGRES_PASSWORD',      '${NEW_PG_PASS}')
+content = replace_var(content, 'POSTGRES_SUPER_PW',      '${NEW_SUPER_PW}')
+content = replace_var(content, 'IAQ_OWNER_PW',           '${NEW_OWNER_PW}')
+content = replace_var(content, 'IAQ_RW_PW',              '${NEW_RW_PW}')
+content = replace_var(content, 'IAQ_RO_PW',              '${NEW_RO_PW}')
 content = replace_var(content, 'GRAFANA_ADMIN_PASSWORD', '${NEW_GF_PASS}')
 content = replace_var(content, 'PURPLEAIR_API_KEY',      '${NEW_PA_KEY}')
 content = replace_var(content, 'PURPLEAIR_READ_KEY',     '${NEW_PA_READ}')
@@ -158,7 +179,10 @@ echo ""
 echo -e "${BOLD}════════════════════════════════════════════════════════${NC}"
 echo -e "${BOLD}  New credentials — save these in your password manager  ${NC}"
 echo -e "${BOLD}════════════════════════════════════════════════════════${NC}"
-printf "  %-26s %s\n" "POSTGRES_PASSWORD"      "$NEW_PG_PASS"
+printf "  %-26s %s\n" "POSTGRES_SUPER_PW"       "$NEW_SUPER_PW"
+printf "  %-26s %s\n" "IAQ_OWNER_PW"            "$NEW_OWNER_PW"
+printf "  %-26s %s\n" "IAQ_RW_PW"               "$NEW_RW_PW"
+printf "  %-26s %s\n" "IAQ_RO_PW"               "$NEW_RO_PW"
 printf "  %-26s %s\n" "GRAFANA_ADMIN_PASSWORD"  "$NEW_GF_PASS"
 printf "  %-26s %s\n" "PURPLEAIR_API_KEY"       "$NEW_PA_KEY"
 printf "  %-26s %s\n" "PURPLEAIR_READ_KEY"      "$NEW_PA_READ"

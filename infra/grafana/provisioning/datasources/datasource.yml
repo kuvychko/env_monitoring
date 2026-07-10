@@ -4,13 +4,13 @@ datasources:
   - name: TimescaleDB
     uid: timescaledb
     type: postgres
-    url: postgres:5432
-    database: iaq
-    user: iaq
+    url: $PG_HOST:5432
+    database: $PG_DB
+    user: iaq_ro
     secureJsonData:
-      password: $POSTGRES_PASSWORD
+      password: $IAQ_RO_PW
     jsonData:
-      database: iaq
+      database: $PG_DB
       sslmode: disable
       maxOpenConns: 5
       maxIdleConns: 2

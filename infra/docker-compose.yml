@@ -1,6 +1,20 @@
+# Two deployment modes, one set of artifacts (see docs/deployment_raspberry_pi.md):
+#
+#   standalone (default for reproduction):
+#     docker compose --profile standalone up -d --build
+#     Brings up a bundled TimescaleDB (`db`); everything runs self-contained.
+#
+#   shared (attach to an existing shared TimescaleDB cluster):
+#     set PG_HOST (+ PG_MIGRATE_* for the first run) in .env, then:
+#     docker compose up -d --build
+#     No DB container is started; services connect to the external cluster.
+#
+# The only switch is PG_HOST (+ whether the `standalone` profile is active).
+
 services:
   mosquitto:
-    image: eclipse-mosquitto:2.1.2
+    # NB: the 2.1.x line is published as -alpine only; a bare 2.1.2 tag does not exist
+    image: eclipse-mosquitto:2.1.2-alpine
     container_name: mosquitto
     ports:
       - "1883:1883"
@@ -12,18 +26,37 @@ services:
       - mosquitto_log:/mosquitto/log
     restart: unless-stopped
 
-  postgres:
+  db:
+    # Bundled database — standalone mode only. In shared mode the cluster
+    # already exists elsewhere and this service never starts.
     image: timescale/timescaledb:2.26.0-pg16
-    container_name: postgres
+    container_name: db
+    profiles: [standalone]
     environment:
-      POSTGRES_USER: iaq
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: iaq
+      POSTGRES_DB: warehouse
+      POSTGRES_PASSWORD: ${POSTGRES_SUPER_PW}
     # Port not exposed externally - only accessible within Docker network
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./postgres/init:/docker-entrypoint-initdb.d:ro
     restart: unless-stopped
+
+  migrate:
+    # One-shot migration runner — both modes. Idempotent; exits when done.
+    image: timescale/timescaledb:2.26.0-pg16
+    environment:
+      PG_HOST: ${PG_HOST:-db}
+      PG_PORT: "5432"
+      PG_DB: ${PG_DB:-warehouse}
+      PG_MIGRATE_USER: ${PG_MIGRATE_USER:-postgres}
+      PG_MIGRATE_PASSWORD: ${PG_MIGRATE_PASSWORD:-${POSTGRES_SUPER_PW}}
+      IAQ_OWNER_PW: ${IAQ_OWNER_PW}
+      IAQ_RW_PW: ${IAQ_RW_PW}
+      IAQ_RO_PW: ${IAQ_RO_PW}
+    volumes:
+      - ./postgres/migrations:/migrations:ro
+      - ./postgres/migrate.sh:/migrate.sh:ro
+    entrypoint: ["/bin/sh", "/migrate.sh"]
+    restart: "no"
 
   ingest:
     build: ../backend/ingest_mqtt
@@ -34,14 +67,16 @@ services:
       MQTT_TOPIC: "iaq/+/telemetry"
       MQTT_USER: ${MQTT_USER}
       MQTT_PASSWORD: ${MQTT_PASSWORD}
-      PG_HOST: postgres
+      PG_HOST: ${PG_HOST:-db}
       PG_PORT: "5432"
-      PG_DB: iaq
-      PG_USER: iaq
-      PG_PASSWORD: ${POSTGRES_PASSWORD}
+      PG_DB: ${PG_DB:-warehouse}
+      PG_USER: iaq_rw
+      PG_PASSWORD: ${IAQ_RW_PW}
     depends_on:
-      - mosquitto
-      - postgres
+      mosquitto:
+        condition: service_started
+      migrate:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   ingest_purpleair:
@@ -54,13 +89,14 @@ services:
       PURPLEAIR_POLL_INTERVAL: "600"
       PURPLEAIR_AVERAGE: "10"
       PURPLEAIR_LOOKBACK_HOURS: "24"
-      PG_HOST: postgres
+      PG_HOST: ${PG_HOST:-db}
       PG_PORT: "5432"
-      PG_DB: iaq
-      PG_USER: iaq
-      PG_PASSWORD: ${POSTGRES_PASSWORD}
+      PG_DB: ${PG_DB:-warehouse}
+      PG_USER: iaq_rw
+      PG_PASSWORD: ${IAQ_RW_PW}
     depends_on:
-      - postgres
+      migrate:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   grafana:
@@ -72,14 +108,17 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
       GF_AUTH_ANONYMOUS_ENABLED: "false"
       GF_SECURITY_COOKIE_SAMESITE: strict
-      # Pass postgres password for datasource provisioning
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      # Datasource provisioning (read-only role)
+      PG_HOST: ${PG_HOST:-db}
+      PG_DB: ${PG_DB:-warehouse}
+      IAQ_RO_PW: ${IAQ_RO_PW}
     volumes:
       - grafana_data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
     depends_on:
-      - postgres
+      migrate:
+        condition: service_completed_successfully
     restart: unless-stopped
 
 volumes:

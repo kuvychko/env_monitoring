@@ -110,23 +110,42 @@ Only columns available from the `average=0` (real-time) history endpoint are inc
 
 ---
 
+## Schema layout and roles
+
+All project tables live in the **`iaq` schema** of a database named
+`warehouse` (the bundled DB in standalone mode, or a shared TimescaleDB
+cluster in shared mode). Three least-privilege roles are created by the first
+migration, each with `search_path = iaq` so queries don't need to qualify
+table names:
+
+| Role | Used by | Privileges |
+|------|---------|------------|
+| `iaq_owner` | migrations / DDL | owns the schema and its objects |
+| `iaq_rw` | ingest services | SELECT / INSERT / UPDATE / DELETE |
+| `iaq_ro` | Grafana | SELECT only |
+
 ## Migrations
 
-Init scripts in `infra/postgres/init/` run automatically on a **fresh** database container. For an **existing** running database, apply manually:
+Migrations in `infra/postgres/migrations/` are **idempotent** and applied in
+lexical order by the one-shot `migrate` container, which runs automatically
+with `docker compose up` (both modes) and exits when done. Re-running is
+always safe:
 
 ```bash
-# From infra/ on the Pi
-docker exec -i postgres psql -U iaq -d iaq < postgres/init/004_add_purpleair.sql
-docker exec -i postgres psql -U iaq -d iaq < postgres/init/005_purpleair_drop_unavailable_cols.sql
+# From infra/
+docker compose run --rm migrate
 ```
 
 | File | Description |
 |------|-------------|
-| `001_schema.sql` | `iaq_readings` hypertable |
-| `002_add_co2_diagnostics.sql` | CO₂ diagnostic columns |
-| `003_add_voc.sql` | VOC columns |
-| `004_add_purpleair.sql` | `purpleair_readings` hypertable |
-| `005_purpleair_drop_unavailable_cols.sql` | Remove columns not populated by history API |
+| `001_roles_and_schema.sql` | roles, `iaq` schema, grants, search_path |
+| `002_tables.sql` | `iaq_readings` + `purpleair_readings` hypertables and indexes |
+
+> Upgrading a pre-schema deployment (tables in `public`, single `iaq` user)?
+> Take a backup, run the new migrations (they create the `iaq` schema alongside
+> the old tables), copy data per table with `INSERT INTO iaq.<t> SELECT * FROM
+> public.<t>` (or CSV `\copy` for large tables), then switch services to the
+> new roles and drop the old tables.
 
 ---
 
