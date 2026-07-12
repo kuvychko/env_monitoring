@@ -347,7 +347,7 @@
     }
   ],
   "schemaVersion": 39,
-  "tags": ["purpleair", "outdoor", "environment"],
+  "tags": ["iaq", "purpleair", "outdoor", "environment"],
   "templating": { "list": [] },
   "time": { "from": "now-6h", "to": "now" },
   "timepicker": {},
@@ -355,5 +355,5 @@
   "timezone": "browser",
   "title": "PurpleAir Outdoor",
   "uid": "purpleair-outdoor",
-  "version": 2
+  "version": 3
 }
